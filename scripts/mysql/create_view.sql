@@ -818,3 +818,14 @@ WHERE
 ORDER BY 
     cb.status,
     cb.col_tiny;
+
+CREATE OR REPLACE VIEW view_case42_compat_optimizer_hint AS
+SELECT
+    COUNT(i.id) AS total_rows,
+    IFNULL(MAX(i.col_tiny), 0) AS max_tiny
+FROM
+    case_01_integers i FORCE INDEX (PRIMARY)
+LEFT JOIN
+    case_02_boolean b ON i.id = b.id
+WHERE
+    ISNULL(b.is_deleted) OR TO_DAYS(NOW()) - TO_DAYS(NOW()) >= 0;
