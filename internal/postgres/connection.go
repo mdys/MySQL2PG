@@ -446,6 +446,26 @@ func (c *Connection) GetTableRowCount(tableName string) (int64, error) {
 }
 
 // BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
+func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]string, string) {
+	copyColumns := make([]string, len(columns))
+	for i, col := range columns {
+		copyColumns[i] = strings.ToLower(col)
+	}
+
+	if primaryKey == "" {
+		return copyColumns, ""
+	}
+
+	lowercasePrimaryKey := strings.ToLower(primaryKey)
+	for i, col := range columns {
+		if strings.EqualFold(col, primaryKey) {
+			return copyColumns, copyColumns[i]
+		}
+	}
+
+	return copyColumns, lowercasePrimaryKey
+}
+
 func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, tableName string, columns []string, columnTypes map[string]string, batchSize int, primaryKey string, rows *sql.Rows) (int, interface{}, error) {
 	ctx := context.Background()
 
@@ -459,22 +479,15 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		effectiveBatchSize = 10000 // 确保至少有一个合理的默认值
 	}
 
-	// 将所有列名转换为小写，以匹配PostgreSQL的默认行为
-	lowercaseColumns := make([]string, len(columns))
-	for i, col := range columns {
-		lowercaseColumns[i] = strings.ToLower(col)
-	}
+	copyColumns, resolvedPrimaryKey := resolveCopyColumnsAndPrimaryKey(columns, primaryKey)
 
 	// 跟踪最后一个主键值
 	var lastValue interface{}
 	var primaryKeyIndex int = -1
 
-	// 找到主键列的索引
-	if primaryKey != "" {
-		// 同样将主键名转换为小写进行比较
-		lowercasePrimaryKey := strings.ToLower(primaryKey)
-		for i, col := range lowercaseColumns {
-			if col == lowercasePrimaryKey {
+	if resolvedPrimaryKey != "" {
+		for i, col := range copyColumns {
+			if col == resolvedPrimaryKey {
 				primaryKeyIndex = i
 				break
 			}
@@ -556,7 +569,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		// 当达到批量大小时执行CopyFrom
 		if rowCount == effectiveBatchSize {
 			// 执行CopyFrom，使用转换后的小写列名
-			_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, lowercaseColumns, pgx.CopyFromRows(copyRows))
+			_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, copyColumns, pgx.CopyFromRows(copyRows))
 			if err != nil {
 				return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
 			}
@@ -570,7 +583,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 	// 执行剩余的数据
 	if rowCount > 0 {
 		// 执行CopyFrom，使用转换后的小写列名
-		_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, lowercaseColumns, pgx.CopyFromRows(copyRows))
+		_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, copyColumns, pgx.CopyFromRows(copyRows))
 		if err != nil {
 			return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
 		}
@@ -581,8 +594,8 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 	}
 
 	// 只有在没有找到主键值的情况下，才执行MAX查询（作为后备方案）
-	if primaryKey != "" && lastValue == nil {
-		query := fmt.Sprintf("SELECT MAX(\"%s\") FROM \"%s\"", primaryKey, tableName)
+	if resolvedPrimaryKey != "" && lastValue == nil {
+		query := fmt.Sprintf("SELECT MAX(\"%s\") FROM \"%s\"", resolvedPrimaryKey, tableName)
 		err := tx.QueryRow(ctx, query).Scan(&lastValue)
 		if err != nil && err != pgx.ErrNoRows {
 			return 0, nil, fmt.Errorf("获取最后一个主键值失败: %w", err)
