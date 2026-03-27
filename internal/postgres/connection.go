@@ -498,6 +498,8 @@ func convertBatchColumnValue(columnName string, value interface{}, columnTypes m
 	}
 }
 
+
+// BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
 func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]string, string) {
 	copyColumns := make([]string, len(columns))
 	for i, col := range columns {
@@ -513,27 +515,6 @@ func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]str
 		}
 	}
 	return copyColumns, lowerPrimaryKey
-}
-
-// BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
-func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]string, string) {
-	copyColumns := make([]string, len(columns))
-	for i, col := range columns {
-		copyColumns[i] = strings.ToLower(col)
-	}
-
-	if primaryKey == "" {
-		return copyColumns, ""
-	}
-
-	lowercasePrimaryKey := strings.ToLower(primaryKey)
-	for i, col := range columns {
-		if strings.EqualFold(col, primaryKey) {
-			return copyColumns, copyColumns[i]
-		}
-	}
-
-	return copyColumns, lowercasePrimaryKey
 }
 
 func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, tableName string, columns []string, columnTypes map[string]string, batchSize int, primaryKey string, rows *sql.Rows) (int, interface{}, error) {
