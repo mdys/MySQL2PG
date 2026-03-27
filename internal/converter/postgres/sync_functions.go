@@ -118,6 +118,8 @@ var (
 	reLoopLoop       = regexp.MustCompile(`(?i)LOOP\s+LOOP`)
 	reEndLoopEndLoop = regexp.MustCompile(`(?i)END\s+LOOP\s+END\s+LOOP`)
 	reEndLoop        = regexp.MustCompile(`(?i)\bEND\s+LOOP\b`)
+	reWhileDo        = regexp.MustCompile(`(?i)\bwhile\s+([^\n]+?)\s+do\b`)
+	reEndWhile       = regexp.MustCompile(`(?i)\bend\s+while\s*;?`)
 
 	// 杂项修复
 	reIfExit         = regexp.MustCompile(`(?i)IF\s+(\w+)\s*EXIT`)
@@ -129,6 +131,10 @@ var (
 	reMiscComment    = regexp.MustCompile(`(?i)\s+--`)
 	reThenExitThen   = regexp.MustCompile(`(?i)then\s+exit\s+then`)
 	reRowCountAssign = regexp.MustCompile(`(?i)(\w+)\s*:=\s*ROW_COUNT\(\)\s*;?`)
+	reDoneEqTrue     = regexp.MustCompile(`(?i)\bdone\s*=\s*1\b`)
+	reDoneEqFalse    = regexp.MustCompile(`(?i)\bdone\s*=\s*0\b`)
+	reEndLoopTail    = regexp.MustCompile(`(?i)\bEND\s+LOOP\s*;\s*[A-Za-z_][A-Za-z0-9_]*`)
+	reIdentifierOnly = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// 类型修饰符清理
 	reUnsigned = regexp.MustCompile(`(?i)\s+UNSIGNED`)
@@ -269,30 +275,13 @@ func (c *FunctionConverter) parseReturnType() error {
 
 	// 提取 RETURNS 之后的内容直到 BEGIN 或特性描述
 	start := returnsIdx + 7
-	// 跳过空白
-	for start < len(ddl) && ddl[start] == ' ' {
+	for start < len(ddl) && isWhitespaceByte(ddl[start]) {
 		start++
 	}
 
-	// 简单的括号匹配提取类型
-	end := start
-	depth := 0
-	for end < len(ddl) {
-		char := ddl[end]
-		if char == '(' {
-			depth++
-		} else if char == ')' {
-			depth--
-		} else if char == ' ' && depth == 0 {
-			break
-		}
-		end++
-	}
-
-	// 截取类型字符串
-	rawType := ddl[start:end]
-	// 同时获取大写版本用于检查，避免重复转换
-	upperRawType := upperDDL[start:end]
+	end := findReturnTypeEnd(ddl, upperDDL, start)
+	rawType := strings.TrimSpace(ddl[start:end])
+	upperRawType := strings.ToUpper(rawType)
 
 	// 移除可能存在的 CHARSET/COLLATE
 	// 例如: VARCHAR(255) CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci
@@ -325,7 +314,7 @@ func (c *FunctionConverter) parseReturnType() error {
 			c.returnType = "TIMESTAMP"
 		}
 	} else {
-		c.returnType = rawType
+		c.returnType = mapTypeToPG(rawType)
 	}
 
 	if c.returnType == "" {
@@ -333,6 +322,66 @@ func (c *FunctionConverter) parseReturnType() error {
 	}
 
 	return nil
+}
+
+func isWhitespaceByte(b byte) bool {
+	return b == ' ' || b == '\n' || b == '\r' || b == '\t'
+}
+
+func isIdentifierByte(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+func hasKeywordAt(input string, idx int, keyword string) bool {
+	if idx < 0 || idx+len(keyword) > len(input) {
+		return false
+	}
+	if !strings.HasPrefix(input[idx:], keyword) {
+		return false
+	}
+	if idx > 0 && isIdentifierByte(input[idx-1]) {
+		return false
+	}
+	end := idx + len(keyword)
+	if end < len(input) && isIdentifierByte(input[end]) {
+		return false
+	}
+	return true
+}
+
+func findReturnTypeEnd(ddl, upperDDL string, start int) int {
+	keywords := []string{
+		"BEGIN",
+		"SQL SECURITY",
+		"NOT DETERMINISTIC",
+		"DETERMINISTIC",
+		"CONTAINS SQL",
+		"NO SQL",
+		"READS SQL DATA",
+		"MODIFIES SQL DATA",
+		"COMMENT",
+	}
+
+	depth := 0
+	for i := start; i < len(ddl); i++ {
+		switch ddl[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+		if depth != 0 {
+			continue
+		}
+		for _, keyword := range keywords {
+			if hasKeywordAt(upperDDL, i, keyword) {
+				return i
+			}
+		}
+	}
+	return len(ddl)
 }
 
 // parseCharacteristics 解析函数特性（DETERMINISTIC, SECURITY, COMMENT 等）
@@ -1225,8 +1274,14 @@ func (c *FunctionConverter) handleUserVariables() {
 
 // mapTypeToPG 辅助函数：映射类型
 func mapTypeToPG(mysqlType string) string {
-	switch strings.ToUpper(mysqlType) {
-	case "INT", "MEDIUMINT", "TINYINT": // TINYINT 在 PG 中通常映射为 SMALLINT，但这里为了兼容性也可以映射为 INTEGER
+	normalized := strings.TrimSpace(strings.ToUpper(mysqlType))
+	baseType := normalized
+	if idx := strings.Index(baseType, "("); idx != -1 {
+		baseType = strings.TrimSpace(baseType[:idx])
+	}
+
+	switch baseType {
+	case "INT", "INTEGER", "MEDIUMINT", "TINYINT": // TINYINT 在 PG 中通常映射为 SMALLINT，但这里为了兼容性也可以映射为 INTEGER
 		return "INTEGER"
 	case "DOUBLE":
 		return "DOUBLE PRECISION"
@@ -1237,7 +1292,7 @@ func mapTypeToPG(mysqlType string) string {
 	case "SMALLINT":
 		return "SMALLINT"
 	default:
-		return mysqlType
+		return strings.TrimSpace(mysqlType)
 	}
 }
 
@@ -1266,6 +1321,12 @@ func (c *FunctionConverter) fixSyntax() {
 	body := c.body
 
 	// 1. 基础结构清理
+	body = normalizeMySQLEscapedQuoteLiteral(body)
+	body = removeMySQLHashComments(body)
+	body = reDoneEqTrue.ReplaceAllString(body, "done")
+	body = reDoneEqFalse.ReplaceAllString(body, "NOT done")
+	body = reEndLoopTail.ReplaceAllString(body, "END LOOP;")
+	body = normalizeEndLoopLabelTails(body)
 	body = reBegin.ReplaceAllString(body, "")
 	// body = reEndSemi.ReplaceAllString(body, "")
 	body = reEmptyLines.ReplaceAllString(body, "\n")
@@ -1274,12 +1335,68 @@ func (c *FunctionConverter) fixSyntax() {
 	// 2. 调用专门的修复函数
 	body = fixIfSyntax(body)
 	body = fixLoopSyntax(body)
+	body = normalizeEndLoopLabelTails(body)
 
 	// 3. 应用大量零散的语法修复规则
 	body = applyMiscFixes(body)
 	body = reDoubleSemicolon.ReplaceAllString(body, ";")
 
 	c.body = body
+}
+
+func removeMySQLHashComments(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		inSingle := false
+		inDouble := false
+		cut := -1
+		for j := 0; j < len(line); j++ {
+			ch := line[j]
+			if ch == '\'' && !inDouble {
+				inSingle = !inSingle
+				continue
+			}
+			if ch == '"' && !inSingle {
+				inDouble = !inDouble
+				continue
+			}
+			if ch == '#' && !inSingle && !inDouble {
+				cut = j
+				break
+			}
+		}
+		if cut >= 0 {
+			lines[i] = strings.TrimRight(line[:cut], " \t")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalizeEndLoopLabelTails(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		upperLine := strings.ToUpper(line)
+		idx := strings.Index(upperLine, "END LOOP;")
+		if idx == -1 {
+			continue
+		}
+		tail := strings.TrimSpace(line[idx+len("END LOOP;"):])
+		if tail == "" {
+			continue
+		}
+		fields := strings.Fields(tail)
+		if len(fields) == 0 {
+			continue
+		}
+		if reIdentifierOnly.MatchString(fields[0]) {
+			lines[i] = line[:idx+len("END LOOP;")]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalizeMySQLEscapedQuoteLiteral(body string) string {
+	return strings.ReplaceAll(body, "'\\''", "''''")
 }
 
 // generateDDL 生成最终 DDL
@@ -1362,6 +1479,9 @@ func fixIfSyntax(body string) string {
 
 // fixLoopSyntax 修复 LOOP 语句
 func fixLoopSyntax(body string) string {
+	body = reWhileDo.ReplaceAllString(body, "WHILE $1 LOOP")
+	body = reEndWhile.ReplaceAllString(body, "END LOOP;")
+
 	// 移除可能的多余 END LOOP
 	body = reEndLoopArgs.ReplaceAllString(body, "\nEND LOOP $1;")
 
