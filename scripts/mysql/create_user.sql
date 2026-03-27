@@ -45,3 +45,9 @@ SELECT
 FROM mysql.tables_priv 
 WHERE User = 'test2' and Db = DATABASE();
 
+DROP USER IF EXISTS 'read_only'@'%';
+CREATE USER 'read_only'@'%' IDENTIFIED BY 'ReadOnly123!@#';
+GRANT SELECT ON case_01_integers TO 'read_only'@'%';
+GRANT SELECT ON case_02_boolean TO 'read_only'@'%';
+GRANT SELECT ON case_03_floats TO 'read_only'@'%';
+FLUSH PRIVILEGES;
