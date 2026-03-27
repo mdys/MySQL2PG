@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ type Connection struct {
 	pool   *pgxpool.Pool
 	config *config.PostgreSQLConfig
 }
+
+var charZeroPattern = regexp.MustCompile(`(?i)char\s*\(\s*0\s*\)`)
 
 // NewConnection 创建新的PostgreSQL连接
 func NewConnection(config *config.PostgreSQLConfig) (*Connection, error) {
@@ -78,30 +81,23 @@ func (c *Connection) BeginTransaction(ctx context.Context) (pgx.Tx, error) {
 // ExecuteDDL 执行DDL语句
 func (c *Connection) ExecuteDDL(ddl string) error {
 	ctx := context.Background()
-
-	// 将DDL转换为小写
-	lowercaseDDL := strings.ToLower(ddl)
-
-	// 将char(0)转换为char(10)，因为PostgreSQL不允许char(0)类型
-	lowercaseDDL = strings.ReplaceAll(lowercaseDDL, "char(0)", "char(10)")
-
-	_, err := c.pool.Exec(ctx, lowercaseDDL)
+	execDDL := sanitizeDDLForExecution(ddl)
+	_, err := c.pool.Exec(ctx, execDDL)
 	if err != nil {
-		return fmt.Errorf("执行DDL失败: %w, PostgreSQL SQL: %s", err, lowercaseDDL)
+		return fmt.Errorf("执行DDL失败: %w, PostgreSQL SQL: %s", err, execDDL)
 	}
 	return err
 }
 
 // ExecuteDDLWithTransaction 在事务中执行DDL语句
 func (c *Connection) ExecuteDDLWithTransaction(tx pgx.Tx, ddl string) error {
-	// 将DDL转换为小写
-	lowercaseDDL := strings.ToLower(ddl)
-
-	// 将char(0)转换为char(10)，因为PostgreSQL不允许char(0)类型
-	lowercaseDDL = strings.ReplaceAll(lowercaseDDL, "char(0)", "char(10)")
-
-	_, err := tx.Exec(context.Background(), lowercaseDDL)
+	execDDL := sanitizeDDLForExecution(ddl)
+	_, err := tx.Exec(context.Background(), execDDL)
 	return err
+}
+
+func sanitizeDDLForExecution(ddl string) string {
+	return charZeroPattern.ReplaceAllString(ddl, "char(10)")
 }
 
 // InsertData 插入数据
@@ -445,6 +441,80 @@ func (c *Connection) GetTableRowCount(tableName string) (int64, error) {
 	return count, nil
 }
 
+func getColumnTypeByName(columnName string, columnTypes map[string]string) string {
+	if len(columnTypes) == 0 {
+		return ""
+	}
+	if t, ok := columnTypes[columnName]; ok {
+		return t
+	}
+	for k, v := range columnTypes {
+		if strings.EqualFold(k, columnName) {
+			return v
+		}
+	}
+	return ""
+}
+
+func isBinaryLikeType(columnType string) bool {
+	t := strings.ToLower(columnType)
+	return strings.Contains(t, "blob") || strings.Contains(t, "binary") || strings.Contains(t, "bytea")
+}
+
+func isGeometryLikeType(columnType string) bool {
+	t := strings.ToLower(columnType)
+	return strings.Contains(t, "point") || strings.Contains(t, "geometry")
+}
+
+func convertBatchColumnValue(columnName string, value interface{}, columnTypes map[string]string) interface{} {
+	switch val := value.(type) {
+	case []byte:
+		columnType := getColumnTypeByName(columnName, columnTypes)
+		if isGeometryLikeType(columnType) {
+			if pointStr, err := parseMySQLPoint(val); err == nil {
+				return pointStr
+			}
+		}
+		if isBinaryLikeType(columnType) {
+			return val
+		}
+		sVal := string(val)
+		if sVal == "0000-00-00 00:00:00" || sVal == "0000-00-00" {
+			return nil
+		}
+		return sVal
+	case string:
+		if val == "0000-00-00 00:00:00" || val == "0000-00-00" {
+			return nil
+		}
+		return val
+	case time.Time:
+		if val.IsZero() {
+			return nil
+		}
+		return val
+	default:
+		return val
+	}
+}
+
+func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]string, string) {
+	copyColumns := make([]string, len(columns))
+	for i, col := range columns {
+		copyColumns[i] = strings.ToLower(col)
+	}
+	if primaryKey == "" {
+		return copyColumns, ""
+	}
+	lowerPrimaryKey := strings.ToLower(primaryKey)
+	for i, col := range columns {
+		if strings.EqualFold(col, primaryKey) {
+			return copyColumns, copyColumns[i]
+		}
+	}
+	return copyColumns, lowerPrimaryKey
+}
+
 // BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
 func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, tableName string, columns []string, columnTypes map[string]string, batchSize int, primaryKey string, rows *sql.Rows) (int, interface{}, error) {
 	ctx := context.Background()
@@ -459,22 +529,16 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		effectiveBatchSize = 10000 // 确保至少有一个合理的默认值
 	}
 
-	// 将所有列名转换为小写，以匹配PostgreSQL的默认行为
-	lowercaseColumns := make([]string, len(columns))
-	for i, col := range columns {
-		lowercaseColumns[i] = strings.ToLower(col)
-	}
+	copyColumns, resolvedPrimaryKey := resolveCopyColumnsAndPrimaryKey(columns, primaryKey)
 
 	// 跟踪最后一个主键值
 	var lastValue interface{}
 	var primaryKeyIndex int = -1
 
 	// 找到主键列的索引
-	if primaryKey != "" {
-		// 同样将主键名转换为小写进行比较
-		lowercasePrimaryKey := strings.ToLower(primaryKey)
-		for i, col := range lowercaseColumns {
-			if col == lowercasePrimaryKey {
+	if resolvedPrimaryKey != "" {
+		for i, col := range copyColumns {
+			if col == resolvedPrimaryKey {
 				primaryKeyIndex = i
 				break
 			}
@@ -506,47 +570,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		// 复制当前行的值到新的切片并进行类型转换
 		rowValues := make([]interface{}, len(values))
 		for i, v := range values {
-			// 进行数据类型转换，处理MySQL和PostgreSQL之间的类型差异
-			switch val := v.(type) {
-			case []byte:
-				sVal := string(val)
-				// 检查是否为Point类型并尝试转换
-				if columnTypes != nil {
-					colType, ok := columnTypes[columns[i]]
-					if ok {
-						colTypeLower := strings.ToLower(colType)
-						if strings.Contains(colTypeLower, "point") || strings.Contains(colTypeLower, "geometry") {
-							if pointStr, err := parseMySQLPoint(val); err == nil {
-								rowValues[i] = pointStr
-								continue
-							}
-						}
-					}
-				}
-
-				// 处理MySQL零值时间
-				if sVal == "0000-00-00 00:00:00" || sVal == "0000-00-00" {
-					rowValues[i] = nil
-				} else {
-					// 将[]byte转换为字符串，pgx会自动处理后续的类型转换
-					rowValues[i] = sVal
-				}
-			case string:
-				if val == "0000-00-00 00:00:00" || val == "0000-00-00" {
-					rowValues[i] = nil
-				} else {
-					rowValues[i] = val
-				}
-			case time.Time:
-				if val.IsZero() {
-					rowValues[i] = nil
-				} else {
-					rowValues[i] = val
-				}
-			default:
-				// 其他类型保持不变
-				rowValues[i] = val
-			}
+			rowValues[i] = convertBatchColumnValue(columns[i], v, columnTypes)
 		}
 		copyRows = append(copyRows, rowValues)
 
@@ -556,7 +580,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		// 当达到批量大小时执行CopyFrom
 		if rowCount == effectiveBatchSize {
 			// 执行CopyFrom，使用转换后的小写列名
-			_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, lowercaseColumns, pgx.CopyFromRows(copyRows))
+			_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, copyColumns, pgx.CopyFromRows(copyRows))
 			if err != nil {
 				return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
 			}
@@ -570,7 +594,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 	// 执行剩余的数据
 	if rowCount > 0 {
 		// 执行CopyFrom，使用转换后的小写列名
-		_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, lowercaseColumns, pgx.CopyFromRows(copyRows))
+		_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, copyColumns, pgx.CopyFromRows(copyRows))
 		if err != nil {
 			return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
 		}
@@ -581,8 +605,8 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 	}
 
 	// 只有在没有找到主键值的情况下，才执行MAX查询（作为后备方案）
-	if primaryKey != "" && lastValue == nil {
-		query := fmt.Sprintf("SELECT MAX(\"%s\") FROM \"%s\"", primaryKey, tableName)
+	if resolvedPrimaryKey != "" && lastValue == nil {
+		query := fmt.Sprintf("SELECT MAX(\"%s\") FROM \"%s\"", resolvedPrimaryKey, tableName)
 		err := tx.QueryRow(ctx, query).Scan(&lastValue)
 		if err != nil && err != pgx.ErrNoRows {
 			return 0, nil, fmt.Errorf("获取最后一个主键值失败: %w", err)
