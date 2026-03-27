@@ -8,8 +8,12 @@ import (
 
 // 正则表达式预编译，提高性能
 var (
-	// 匹配数据库名前缀，如 "db"."table" - 使用Go支持的语法
-	reDBPrefix = regexp.MustCompile(`(?i)"[^"]+"\.("[^"]+")`)
+	// 匹配三段式数据库名前缀，如 "db"."table"."column"
+	reDBPrefix = regexp.MustCompile(`(?i)"[^"]+"\.("[^"]+"\."[^"]+")`)
+	// 匹配带别名的二段式表引用，如 "db"."table" "t"
+	reDBTableWithAlias = regexp.MustCompile(`(?i)"[^"]+"\.("[^"]+")(\s+"[^"]+")`)
+	// 匹配 FROM/JOIN 中不带别名的二段式表引用，如 FROM "db"."table"
+	reDBTableInFromJoin = regexp.MustCompile(`(?i)\b(from|join)\s+"[^"]+"\.("[^"]+")`)
 	// 匹配 IFNULL 函数
 	reIfnull = regexp.MustCompile(`(?i)ifnull\s*\(`)
 	// 匹配 GROUP_CONCAT 函数
@@ -131,7 +135,9 @@ var (
 	// 匹配COALESCE函数的正则
 	reCoalesce = regexp.MustCompile(`(?i)coalesce\s*\(\s*("[\w\.]+)\s*,\s*(\d+)\s*\)`)
 	// 匹配 interval 语法 (如 now() + interval 1 day)
-	reInterval = regexp.MustCompile(`(?i)(\S[^+\-]*\S)\s*([+\-])\s*interval\s+([+\-]?\d+)\s+([\w_]+)`)
+	reInterval  = regexp.MustCompile(`(?i)(\S[^+\-]*\S)\s*([+\-])\s*interval\s+([+\-]?\d+)\s+([\w_]+)`)
+	reIndexHint = regexp.MustCompile(`(?i)\b(?:force|use|ignore)\s+index\s*(?:for\s+(?:join|order\s+by|group\s+by)\s*)?\([^)]+\)`)
+	reISNULL    = regexp.MustCompile(`(?i)\bisnull\s*\(\s*([^)]+)\s*\)`)
 )
 
 // ConvertViewDDL 将MySQL的VIEW_DEFINITION转换为PostgreSQL的CREATE VIEW语句,从information_schema.VIEWS中读取的VIEW_DEFINITION字段内容
@@ -149,8 +155,26 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		return "", fmt.Errorf("failed to process backticks in view definition for view '%s'", viewName)
 	}
 
-	// 移除数据库名前缀（例如 "db"."table" -> 只保留 "table"）,仅在出现 "db"."table" 或 "db"."table"."col" 的情况下移除 db 前缀
+	processed = reIndexHint.ReplaceAllString(processed, "")
+	processed = strings.Join(strings.Fields(processed), " ")
+	if processed == "" {
+		return "", fmt.Errorf("failed to remove mysql index hints in view definition for view '%s'", viewName)
+	}
+
+	processed = reISNULL.ReplaceAllString(processed, "($1 IS NULL)")
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace isnull in view definition for view '%s'", viewName)
+	}
+
+	processed = replaceToDaysExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace to_days in view definition for view '%s'", viewName)
+	}
+
+	// 移除三段式数据库名前缀（例如 "db"."table"."col" -> "table"."col"）
 	processed = reDBPrefix.ReplaceAllString(processed, "$1")
+	processed = reDBTableWithAlias.ReplaceAllString(processed, "$1$2")
+	processed = reDBTableInFromJoin.ReplaceAllString(processed, "$1 $2")
 	if processed == "" {
 		return "", fmt.Errorf("failed to remove database prefix in view definition for view '%s'", viewName)
 	}
@@ -200,50 +224,6 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	if processed == "" {
 		return "", fmt.Errorf("failed to adjust LIMIT syntax in view definition for view '%s'", viewName)
 	}
-
-	// 处理表连接条件中的列名歧义，为连接条件中的列添加表别名,对于视图中常见的连接模式：(table1 alias1 join table2 alias2 on(...)),为on子句中的列添加表别名
-	processed = reJoinPattern.ReplaceAllStringFunc(processed, func(joinExpr string) string {
-		matches := reJoinPattern.FindStringSubmatch(joinExpr)
-		if len(matches) < 6 {
-			return joinExpr
-		}
-
-		// matches[1]: 第一个表名
-		// matches[2]: 第一个表别名
-		// matches[3]: 第二个表名
-		// matches[4]: 第二个表别名
-		// matches[5]: 连接条件
-
-		alias1 := matches[2]
-		alias2 := matches[4]
-		condition := matches[5]
-
-		// 处理条件中的列名，为没有表别名的列添加表别名
-		processedCondition := reColumns.ReplaceAllStringFunc(condition, func(colMatch string) string {
-			parts := strings.SplitN(colMatch, "=", 2)
-			if len(parts) != 2 {
-				return colMatch
-			}
-
-			col1 := strings.TrimSpace(parts[0])
-			col2 := strings.TrimSpace(parts[1])
-
-			// 为没有表别名的列添加表别名
-			if !strings.Contains(col1, ".") {
-				col1 = fmt.Sprintf("%s.%s", alias1, col1)
-			}
-			if !strings.Contains(col2, ".") {
-				col2 = fmt.Sprintf("%s.%s", alias2, col2)
-			}
-
-			// 添加类型转换以解决PostgreSQL中的类型不匹配问题
-			return fmt.Sprintf("%s::text = %s::text", col1, col2)
-		})
-
-		// 重新构建连接表达式
-		return fmt.Sprintf("(%s %s join %s %s on((%s)))",
-			matches[1], alias1, matches[3], alias2, processedCondition)
-	})
 
 	// 9) 将简单的CONCAT(a,b,...)转换为 a || b || ... （保留原始行为，对于复杂表达式会尽量处理）
 	processed = replaceConcatExpressions(processed)
@@ -720,6 +700,51 @@ func splitTopLevelCommas(s string) []string {
 		parts = append(parts, strings.TrimSpace(buf.String()))
 	}
 	return parts
+}
+
+// replaceToDaysExpressions 将 to_days(expr) 转成 floor(extract(epoch from (expr)::timestamp) / 86400)
+func replaceToDaysExpressions(s string) string {
+	out := s
+	idx := 0
+	for {
+		pos := -1
+		for i := idx; i <= len(out)-8; i++ {
+			if strings.ToLower(out[i:i+8]) == "to_days(" {
+				pos = i
+				break
+			}
+		}
+		if pos == -1 {
+			break
+		}
+
+		openParen := pos + 7
+		depth := 1
+		end := openParen + 1
+		for i := openParen + 1; i < len(out); i++ {
+			switch out[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					end = i
+					i = len(out)
+				}
+			}
+		}
+
+		if depth > 0 {
+			idx = pos + 8
+			continue
+		}
+
+		expr := strings.TrimSpace(out[openParen+1 : end])
+		replacement := fmt.Sprintf("(floor(extract(epoch from (%s)::timestamp) / 86400))", expr)
+		out = out[:pos] + replacement + out[end+1:]
+		idx = pos + len(replacement)
+	}
+	return out
 }
 
 // replaceConcatExpressions 将 concat(a,b,c) 转成 a || b || c（尽量处理嵌套）
