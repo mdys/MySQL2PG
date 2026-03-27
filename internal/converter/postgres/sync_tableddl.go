@@ -62,6 +62,25 @@ var (
 	reVirtual       = regexp.MustCompile(`(?i)\s+VIRTUAL`)
 )
 
+func extractPrimaryKeyColumn(line string) string {
+	openIdx := strings.Index(line, "(")
+	closeIdx := strings.LastIndex(line, ")")
+	if openIdx == -1 || closeIdx == -1 || closeIdx <= openIdx {
+		return ""
+	}
+
+	content := strings.TrimSpace(line[openIdx+1 : closeIdx])
+	if content == "" {
+		return ""
+	}
+
+	firstColumn := strings.Split(content, ",")[0]
+	firstColumn = strings.TrimSpace(firstColumn)
+	firstColumn = strings.Trim(firstColumn, `"`)
+	firstColumn = strings.Trim(firstColumn, "`")
+	return firstColumn
+}
+
 // 基本类型正则缓存
 var basicTypeRegexes = make(map[string]*regexp.Regexp)
 
@@ -710,9 +729,14 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		}
 
 		if strings.HasPrefix(strings.ToUpper(trimmedLine), "PRIMARY KEY") {
-			pkMatch := rePrimaryKey.FindStringSubmatch(trimmedLine)
-			if len(pkMatch) > 1 {
-				primaryKeyColumn = pkMatch[1]
+			pkColumn := extractPrimaryKeyColumn(trimmedLine)
+			if pkColumn == "" {
+				pkMatch := rePrimaryKey.FindStringSubmatch(trimmedLine)
+				if len(pkMatch) > 1 {
+					primaryKeyColumn = pkMatch[1]
+				}
+			} else {
+				primaryKeyColumn = pkColumn
 			}
 			continue
 		}
