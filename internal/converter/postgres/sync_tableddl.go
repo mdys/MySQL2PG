@@ -51,7 +51,7 @@ var (
 	reTableComment = regexp.MustCompile(`(?i)\s+COMMENT\s*=\s*'([^']*)'`)
 
 	// 索引相关正则
-	reIndexPattern = regexp.MustCompile(`^(KEY|INDEX|UNIQUE KEY|UNIQUE INDEX|"KEY"|"INDEX"|"UNIQUE KEY"|"UNIQUE INDEX")\s+(["a-zA-Z_]["a-zA-Z0-9_"]*)\s*\(["a-zA-Z_]`)
+	reIndexPattern = regexp.MustCompile(`(?i)^(UNIQUE\s+)?(FULLTEXT\s+)?(KEY|INDEX)\s+`)
 	rePrimaryKey   = regexp.MustCompile(`PRIMARY KEY\s*\(\s*(\w+)\s*\)`)
 
 	// mb3相关正则
@@ -396,7 +396,18 @@ func processColumnDefinition(line string, lowercaseColumns bool) (columnName str
 	}
 
 	upperLine := strings.ToUpper(line)
-	if strings.HasPrefix(upperLine, "CONSTRAINT") || strings.HasPrefix(upperLine, "KEY") || strings.HasPrefix(upperLine, "INDEX") {
+	isKeyword := false
+	if strings.HasPrefix(upperLine, "CONSTRAINT ") || strings.HasPrefix(upperLine, "CONSTRAINT(") {
+		isKeyword = true
+	} else if strings.HasPrefix(upperLine, "KEY ") || strings.HasPrefix(upperLine, "KEY(") {
+		isKeyword = true
+	} else if strings.HasPrefix(upperLine, "INDEX ") || strings.HasPrefix(upperLine, "INDEX(") {
+		isKeyword = true
+	} else if strings.HasPrefix(upperLine, "FULLTEXT KEY ") || strings.HasPrefix(upperLine, "FULLTEXT KEY(") || strings.HasPrefix(upperLine, "FULLTEXT INDEX ") || strings.HasPrefix(upperLine, "FULLTEXT INDEX(") {
+		isKeyword = true
+	}
+
+	if isKeyword {
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
 			isConstraint = true
@@ -404,8 +415,8 @@ func processColumnDefinition(line string, lowercaseColumns bool) (columnName str
 		}
 		upperSecondPart := strings.ToUpper(parts[1])
 		isDataType := false
-		for _, t := range []string{"INT", "TEXT", "VARCHAR", "CHAR", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "DECIMAL", "DOUBLE", "FLOAT", "BLOB", "BYTEA", "JSON"} {
-			if strings.Contains(upperSecondPart, t) {
+		for _, t := range []string{"BIGINT", "SMALLINT", "MEDIUMINT", "TINYINT", "INTEGER", "INT", "TEXT", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT", "VARCHAR", "CHAR", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "DECIMAL", "DOUBLE", "FLOAT", "NUMERIC", "REAL", "BLOB", "BYTEA", "BINARY", "VARBINARY", "JSON", "ENUM", "SET"} {
+			if strings.HasPrefix(upperSecondPart, t) {
 				isDataType = true
 				break
 			}
@@ -667,7 +678,27 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 			continue
 		}
 
-		if reIndexPattern.MatchString(upperTrimmedLine) ||
+		skipIndexLine := false
+		if reIndexPattern.MatchString(upperTrimmedLine) {
+			parts := strings.Fields(trimmedLine)
+			if len(parts) < 2 {
+				skipIndexLine = true
+			} else {
+				upperSecondPart := strings.ToUpper(parts[1])
+				isDataType := false
+				for _, t := range []string{"BIGINT", "SMALLINT", "MEDIUMINT", "TINYINT", "INTEGER", "INT", "TEXT", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT", "VARCHAR", "CHAR", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "DECIMAL", "DOUBLE", "FLOAT", "NUMERIC", "REAL", "BLOB", "BYTEA", "BINARY", "VARBINARY", "JSON", "ENUM", "SET"} {
+					if strings.HasPrefix(upperSecondPart, t) {
+						isDataType = true
+						break
+					}
+				}
+				if !isDataType {
+					skipIndexLine = true
+				}
+			}
+		}
+
+		if skipIndexLine ||
 			strings.Contains(upperTrimmedLine, "FOREIGN KEY") ||
 			strings.Contains(upperTrimmedLine, "USING BTREE") ||
 			strings.Contains(upperTrimmedLine, "USING HASH") ||
