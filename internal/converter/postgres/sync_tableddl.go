@@ -190,6 +190,7 @@ type ConvertTableDDLResult struct {
 	TableComment   string
 	ColumnNames    map[string]string // 键：原始列名，值：转换后的列名（带双引号格式）
 	ColumnComments map[string]string // 键：原始列名，值：列注释
+	PartitionDDLs  []string
 }
 
 // parseTableInfo 解析表名和是否为临时表
@@ -236,6 +237,7 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 	columnsStart = tableNameStart + tableNameEnd + 1
 	bracketCount = 1
 
+	foundColumnsEnd := false
 	for i := columnsStart; i < len(mysqlDDLRunes); i++ {
 		char := mysqlDDLRunes[i]
 
@@ -264,9 +266,13 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 				bracketCount--
 				if bracketCount == 0 {
 					columnsEnd = len([]byte(string(mysqlDDLRunes[:i+1])))
+					foundColumnsEnd = true
 					break
 				}
 			}
+		}
+		if foundColumnsEnd {
+			break
 		}
 	}
 
@@ -278,6 +284,101 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 	}
 
 	return tableName, isTemporary, tableComment, columnsStart, columnsEnd, nil
+}
+
+type partitionRangeDefinition struct {
+	name     string
+	lessThan string
+}
+
+func findMatchingParen(input string, openIdx int) int {
+	depth := 0
+	for i := openIdx; i < len(input); i++ {
+		switch input[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func parseRangePartitionInfo(mysqlDDL string) (string, []partitionRangeDefinition) {
+	upperDDL := strings.ToUpper(mysqlDDL)
+	rangeIdx := strings.Index(upperDDL, "PARTITION BY RANGE")
+	if rangeIdx == -1 {
+		return "", nil
+	}
+
+	rangeSegment := mysqlDDL[rangeIdx:]
+	rangeUpperSegment := upperDDL[rangeIdx:]
+
+	rangeTokenIdx := strings.Index(rangeUpperSegment, "RANGE")
+	if rangeTokenIdx == -1 {
+		return "", nil
+	}
+
+	exprOpenIdx := strings.Index(rangeSegment[rangeTokenIdx+len("RANGE"):], "(")
+	if exprOpenIdx == -1 {
+		return "", nil
+	}
+	exprOpenIdx += rangeTokenIdx + len("RANGE")
+
+	exprCloseIdx := findMatchingParen(rangeSegment, exprOpenIdx)
+	if exprCloseIdx == -1 {
+		return "", nil
+	}
+	expr := strings.TrimSpace(rangeSegment[exprOpenIdx+1 : exprCloseIdx])
+
+	defOpenRel := strings.Index(rangeSegment[exprCloseIdx+1:], "(")
+	if defOpenRel == -1 {
+		return expr, nil
+	}
+	defOpenIdx := exprCloseIdx + 1 + defOpenRel
+	defCloseIdx := findMatchingParen(rangeSegment, defOpenIdx)
+	if defCloseIdx == -1 {
+		return expr, nil
+	}
+
+	defSection := rangeSegment[defOpenIdx+1 : defCloseIdx]
+	rePartitionDef := regexp.MustCompile(`(?is)PARTITION\s+"?([a-zA-Z0-9_]+)"?\s+VALUES\s+LESS\s+THAN\s*\(\s*([^)]+)\s*\)`)
+	matches := rePartitionDef.FindAllStringSubmatch(defSection, -1)
+	if len(matches) == 0 {
+		return expr, nil
+	}
+
+	partitions := make([]partitionRangeDefinition, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		partitions = append(partitions, partitionRangeDefinition{
+			name:     strings.TrimSpace(match[1]),
+			lessThan: strings.TrimSpace(match[2]),
+		})
+	}
+
+	return expr, partitions
+}
+
+func convertPartitionExpression(mysqlExpr string) string {
+	reYearExpr := regexp.MustCompile(`(?is)^\s*YEAR\s*\(\s*"?([a-zA-Z0-9_]+)"?\s*\)\s*$`)
+	if match := reYearExpr.FindStringSubmatch(mysqlExpr); len(match) == 2 {
+		return fmt.Sprintf(`EXTRACT(YEAR FROM "%s")`, match[1])
+	}
+	return strings.TrimSpace(mysqlExpr)
+}
+
+func normalizePartitionBound(bound string) string {
+	trimmed := strings.TrimSpace(bound)
+	if strings.EqualFold(trimmed, "MAXVALUE") {
+		return "MAXVALUE"
+	}
+	return trimmed
 }
 
 // cleanTableLevelSettings 清理表级别的引擎、字符集和行格式设置
@@ -650,6 +751,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 
 	columnNamesMap := make(map[string]string)
 	columnCommentsMap := make(map[string]string)
+	partitionExpression, partitionDefs := parseRangePartitionInfo(mysqlDDL)
 
 	tableName, isTemporary, tableComment, columnsStart, columnsEnd, err := parseTableInfo(mysqlDDL)
 	if err != nil {
@@ -840,6 +942,20 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 	}
 
 	result.WriteString(`)`)
+	var partitionDDLs []string
+	if !isTemporary && partitionExpression != "" && len(partitionDefs) > 0 {
+		pgPartitionExpr := convertPartitionExpression(partitionExpression)
+		result.WriteString(fmt.Sprintf(` PARTITION BY RANGE (%s)`, pgPartitionExpr))
+		prevUpper := "MINVALUE"
+		for _, partitionDef := range partitionDefs {
+			currentUpper := normalizePartitionBound(partitionDef.lessThan)
+			partitionTableName := fmt.Sprintf(`"%s_%s"`, tableName, partitionDef.name)
+			partitionDDL := fmt.Sprintf(`CREATE TABLE %s PARTITION OF "%s" FOR VALUES FROM (%s) TO (%s)`,
+				partitionTableName, tableName, prevUpper, currentUpper)
+			partitionDDLs = append(partitionDDLs, partitionDDL)
+			prevUpper = currentUpper
+		}
+	}
 	finalDDL := result.String()
 
 	if (!strings.Contains(finalDDL, "CREATE TABLE") && !strings.Contains(finalDDL, "CREATE TEMPORARY TABLE")) || !strings.Contains(finalDDL, "(") || !strings.Contains(finalDDL, ")") {
@@ -851,6 +967,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		TableComment:   tableComment,
 		ColumnNames:    columnNamesMap,
 		ColumnComments: columnCommentsMap,
+		PartitionDDLs:  partitionDDLs,
 	}, nil
 }
 
