@@ -19,6 +19,8 @@ var (
 	reComplexCharsetVarchar  = regexp.MustCompile(`(?i)(varchar\(\d+\))\s*character\s+char\(\d+\)\s*ascii`)
 	reComplexCharset         = regexp.MustCompile(`(?i)(char\(\d+\)|varchar\(\d+\)|text)\s*character\s+(char\(\d+\)|varchar\(\d+\))`)
 	reMb4Suffix              = regexp.MustCompile(`(?i)(text|longtext|mediumtext|tinytext|blob|longblob|mediumblob|tinyblob|binary|varbinary|varchar\(\d+\)|char\(\d+\))mb4`)
+	reMySQLCharsetClause     = regexp.MustCompile(`(?i)\s+(?:character\s+set|charset)\s*=?\s*[\w]+`)
+	reMySQLCollateClause     = regexp.MustCompile(`(?i)\s+collate\s+[\w]+`)
 
 	// 默认值处理相关正则
 	reDefaultEqual            = regexp.MustCompile(`default\s*=\s*`)
@@ -188,6 +190,7 @@ type ConvertTableDDLResult struct {
 	TableComment   string
 	ColumnNames    map[string]string // 键：原始列名，值：转换后的列名（带双引号格式）
 	ColumnComments map[string]string // 键：原始列名，值：列注释
+	PartitionDDLs  []string
 }
 
 // parseTableInfo 解析表名和是否为临时表
@@ -234,6 +237,7 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 	columnsStart = tableNameStart + tableNameEnd + 1
 	bracketCount = 1
 
+	foundColumnsEnd := false
 	for i := columnsStart; i < len(mysqlDDLRunes); i++ {
 		char := mysqlDDLRunes[i]
 
@@ -262,9 +266,13 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 				bracketCount--
 				if bracketCount == 0 {
 					columnsEnd = len([]byte(string(mysqlDDLRunes[:i+1])))
+					foundColumnsEnd = true
 					break
 				}
 			}
+		}
+		if foundColumnsEnd {
+			break
 		}
 	}
 
@@ -276,6 +284,275 @@ func parseTableInfo(mysqlDDL string) (tableName string, isTemporary bool, tableC
 	}
 
 	return tableName, isTemporary, tableComment, columnsStart, columnsEnd, nil
+}
+
+type partitionRangeDefinition struct {
+	name     string
+	lessThan string
+}
+
+func findMatchingParen(input string, openIdx int) int {
+	depth := 0
+	for i := openIdx; i < len(input); i++ {
+		switch input[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func parseRangePartitionInfo(mysqlDDL string) (string, []partitionRangeDefinition) {
+	upperDDL := strings.ToUpper(mysqlDDL)
+	rangeIdx := strings.Index(upperDDL, "PARTITION BY RANGE")
+	if rangeIdx == -1 {
+		return "", nil
+	}
+
+	rangeSegment := mysqlDDL[rangeIdx:]
+	rangeUpperSegment := upperDDL[rangeIdx:]
+
+	rangeTokenIdx := strings.Index(rangeUpperSegment, "RANGE")
+	if rangeTokenIdx == -1 {
+		return "", nil
+	}
+
+	exprOpenIdx := strings.Index(rangeSegment[rangeTokenIdx+len("RANGE"):], "(")
+	if exprOpenIdx == -1 {
+		return "", nil
+	}
+	exprOpenIdx += rangeTokenIdx + len("RANGE")
+
+	exprCloseIdx := findMatchingParen(rangeSegment, exprOpenIdx)
+	if exprCloseIdx == -1 {
+		return "", nil
+	}
+	expr := strings.TrimSpace(rangeSegment[exprOpenIdx+1 : exprCloseIdx])
+
+	defOpenRel := strings.Index(rangeSegment[exprCloseIdx+1:], "(")
+	if defOpenRel == -1 {
+		return expr, nil
+	}
+	defOpenIdx := exprCloseIdx + 1 + defOpenRel
+	defCloseIdx := findMatchingParen(rangeSegment, defOpenIdx)
+	if defCloseIdx == -1 {
+		return expr, nil
+	}
+
+	defSection := rangeSegment[defOpenIdx+1 : defCloseIdx]
+	rePartitionDef := regexp.MustCompile(`(?is)PARTITION\s+"?([a-zA-Z0-9_]+)"?\s+VALUES\s+LESS\s+THAN\s*\(\s*([^)]+)\s*\)`)
+	matches := rePartitionDef.FindAllStringSubmatch(defSection, -1)
+	if len(matches) == 0 {
+		return expr, nil
+	}
+
+	partitions := make([]partitionRangeDefinition, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		partitions = append(partitions, partitionRangeDefinition{
+			name:     strings.TrimSpace(match[1]),
+			lessThan: strings.TrimSpace(match[2]),
+		})
+	}
+
+	return expr, partitions
+}
+
+func convertPartitionExpression(mysqlExpr string) string {
+	reYearExpr := regexp.MustCompile(`(?is)^\s*YEAR\s*\(\s*"?([a-zA-Z0-9_]+)"?\s*\)\s*$`)
+	if match := reYearExpr.FindStringSubmatch(mysqlExpr); len(match) == 2 {
+		return fmt.Sprintf(`EXTRACT(YEAR FROM "%s")`, match[1])
+	}
+	return strings.TrimSpace(mysqlExpr)
+}
+
+func normalizePartitionBound(bound string) string {
+	trimmed := strings.TrimSpace(bound)
+	if strings.EqualFold(trimmed, "MAXVALUE") {
+		return "MAXVALUE"
+	}
+	return trimmed
+}
+
+// toLowerOutsideQuotes 将字符串中非引号包裹内容转换为小写
+func toLowerOutsideQuotes(input string) string {
+	var builder strings.Builder
+	builder.Grow(len(input))
+
+	inSingleQuote := false
+	inDoubleQuote := false
+	escapeNext := false
+
+	for _, char := range input {
+		if escapeNext {
+			builder.WriteRune(char)
+			escapeNext = false
+			continue
+		}
+
+		switch char {
+		case '\\':
+			builder.WriteRune(char)
+			escapeNext = true
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+			builder.WriteRune(char)
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+			builder.WriteRune(char)
+		default:
+			if inSingleQuote || inDoubleQuote {
+				builder.WriteRune(char)
+			} else {
+				builder.WriteRune([]rune(strings.ToLower(string(char)))[0])
+			}
+		}
+	}
+
+	return builder.String()
+}
+
+// convertMySQLDateFormatToPostgres 将MySQL日期格式转换为PostgreSQL日期格式
+func convertMySQLDateFormatToPostgres(mysqlFormat string) string {
+	replacements := []struct {
+		mysql string
+		pg    string
+	}{
+		{"%Y", "YYYY"},
+		{"%m", "MM"},
+		{"%d", "DD"},
+		{"%H", "HH24"},
+		{"%h", "HH12"},
+		{"%I", "HH12"},
+		{"%i", "MI"},
+		{"%s", "SS"},
+		{"%f", "US"},
+	}
+
+	converted := mysqlFormat
+	for _, replacement := range replacements {
+		converted = strings.ReplaceAll(converted, replacement.mysql, replacement.pg)
+	}
+
+	return converted
+}
+
+// convertGeneratedFunctionsToPostgres 将生成列中的MySQL函数转换为PostgreSQL表达式
+func convertGeneratedFunctionsToPostgres(typeDefinition string) string {
+	reJSONUnquoteExtract := regexp.MustCompile(`(?is)json_unquote\s*\(\s*json_extract\s*\(\s*([^,]+?)\s*,\s*'\s*\$\.([^']+)\s*'\s*\)\s*\)`)
+	typeDefinition = reJSONUnquoteExtract.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reJSONUnquoteExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return fmt.Sprintf("(%s ->> '%s')", strings.TrimSpace(match[1]), strings.TrimSpace(match[2]))
+	})
+
+	reJSONExtract := regexp.MustCompile(`(?is)json_extract\s*\(\s*([^,]+?)\s*,\s*'\s*\$\.([^']+)\s*'\s*\)`)
+	typeDefinition = reJSONExtract.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reJSONExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return fmt.Sprintf("(%s -> '%s')", strings.TrimSpace(match[1]), strings.TrimSpace(match[2]))
+	})
+
+	reStrToDate := regexp.MustCompile(`(?is)str_to_date\s*\(\s*([^,]+?)\s*,\s*'([^']+)'\s*\)`)
+	typeDefinition = reStrToDate.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reStrToDate.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		pgFormat := convertMySQLDateFormatToPostgres(strings.TrimSpace(match[2]))
+		return fmt.Sprintf("to_timestamp(%s, '%s')::timestamp", strings.TrimSpace(match[1]), pgFormat)
+	})
+
+	return typeDefinition
+}
+
+// shouldFallbackGeneratedToPlainColumn 判断是否需要将生成列降级为普通列
+func shouldFallbackGeneratedToPlainColumn(typeDefinition string) bool {
+	lowerType := strings.ToLower(typeDefinition)
+	if !strings.Contains(lowerType, "generated always as") {
+		return false
+	}
+	return strings.Contains(lowerType, "to_timestamp(")
+}
+
+// stripGeneratedClause 移除生成列子句，仅保留基础类型定义
+func stripGeneratedClause(typeDefinition string) string {
+	lowerType := strings.ToLower(typeDefinition)
+	generatedIdx := strings.Index(lowerType, " generated always as")
+	if generatedIdx == -1 {
+		return strings.TrimSpace(typeDefinition)
+	}
+	return strings.TrimSpace(typeDefinition[:generatedIdx])
+}
+
+// isGeneratedColumnDefinition 判断字段定义是否为生成列定义
+func isGeneratedColumnDefinition(typeDefinition string) bool {
+	return strings.Contains(strings.ToLower(typeDefinition), "generated always as")
+}
+
+// extractGeneratedExpression 提取生成列表达式中的核心表达式
+func extractGeneratedExpression(typeDefinition string) (string, bool) {
+	lowerType := strings.ToLower(typeDefinition)
+	generatedIdx := strings.Index(lowerType, "generated always as")
+	if generatedIdx == -1 {
+		return "", false
+	}
+
+	openRelIdx := strings.Index(typeDefinition[generatedIdx:], "(")
+	if openRelIdx == -1 {
+		return "", false
+	}
+	openIdx := generatedIdx + openRelIdx
+	closeIdx := findMatchingParen(typeDefinition, openIdx)
+	if closeIdx == -1 || closeIdx <= openIdx {
+		return "", false
+	}
+
+	return strings.TrimSpace(typeDefinition[openIdx+1 : closeIdx]), true
+}
+
+// expandGeneratedExpressionDependencies 展开生成列表达式中对已生成列的依赖引用
+func expandGeneratedExpressionDependencies(expression string, generatedExpressionMap map[string]string) string {
+	expanded := expression
+	changed := true
+
+	for changed {
+		changed = false
+		for generatedColumn, generatedExpression := range generatedExpressionMap {
+			quotedPattern := regexp.MustCompile(`(?i)"` + regexp.QuoteMeta(generatedColumn) + `"`)
+			unquotedPattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(generatedColumn) + `\b`)
+
+			replacement := "(" + generatedExpression + ")"
+			afterQuoted := quotedPattern.ReplaceAllString(expanded, replacement)
+			if afterQuoted != expanded {
+				expanded = afterQuoted
+				changed = true
+			}
+
+			afterUnquoted := unquotedPattern.ReplaceAllString(expanded, replacement)
+			if afterUnquoted != expanded {
+				expanded = afterUnquoted
+				changed = true
+			}
+		}
+	}
+
+	return expanded
 }
 
 // cleanTableLevelSettings 清理表级别的引擎、字符集和行格式设置
@@ -481,6 +758,11 @@ func processColumnDefinition(line string, lowercaseColumns bool) (columnName str
 
 // cleanTypeDefinition 清理和规范化类型定义
 func cleanTypeDefinition(typeDefinition string) string {
+	if strings.Contains(strings.ToLower(typeDefinition), "generated always as") {
+		typeDefinition = reCharsetPrefix.ReplaceAllString(typeDefinition, "$1")
+		typeDefinition = convertGeneratedFunctionsToPostgres(typeDefinition)
+	}
+
 	typeDefinition = reTypeMb3Direct.ReplaceAllString(typeDefinition, "$1")
 	typeDefinition = reTypeMb3Any.ReplaceAllString(typeDefinition, "$1")
 	typeDefinition = reMb3Suffix.ReplaceAllString(typeDefinition, "")
@@ -499,7 +781,9 @@ func cleanTypeDefinition(typeDefinition string) string {
 		typeDefinition = strings.ReplaceAll(typeDefinition, replacements[i], replacements[i+1])
 	}
 
-	lowerTypeDef := strings.ToLower(typeDefinition)
+	lowerTypeDef := toLowerOutsideQuotes(typeDefinition)
+	lowerTypeDef = reMySQLCharsetClause.ReplaceAllString(lowerTypeDef, "")
+	lowerTypeDef = reMySQLCollateClause.ReplaceAllString(lowerTypeDef, "")
 
 	// 批量移除字符集相关字符串
 	charsetRemovals := []string{
@@ -646,6 +930,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 
 	columnNamesMap := make(map[string]string)
 	columnCommentsMap := make(map[string]string)
+	partitionExpression, partitionDefs := parseRangePartitionInfo(mysqlDDL)
 
 	tableName, isTemporary, tableComment, columnsStart, columnsEnd, err := parseTableInfo(mysqlDDL)
 	if err != nil {
@@ -658,6 +943,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 	var columnDefinitions []string
 	var primaryKeyColumn string
 	columnNames := make(map[string]string)
+	generatedExpressionMap := make(map[string]string)
 
 	var incompleteTypeDef bool
 	var partialTypeDef string
@@ -807,6 +1093,18 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		}
 
 		typeDefinition = cleanTypeDefinition(typeDefinition)
+		if shouldFallbackGeneratedToPlainColumn(typeDefinition) {
+			typeDefinition = stripGeneratedClause(typeDefinition)
+		}
+		if isGeneratedColumnDefinition(typeDefinition) {
+			if rawExpression, ok := extractGeneratedExpression(typeDefinition); ok {
+				expandedExpression := expandGeneratedExpressionDependencies(rawExpression, generatedExpressionMap)
+				if expandedExpression != rawExpression {
+					typeDefinition = strings.Replace(typeDefinition, rawExpression, expandedExpression, 1)
+				}
+				generatedExpressionMap[strings.ToLower(columnName)] = expandedExpression
+			}
+		}
 		newColumnDefinition := fmt.Sprintf(`"%s" %s`, columnName, typeDefinition)
 		columnDefinitions = append(columnDefinitions, newColumnDefinition)
 	}
@@ -836,6 +1134,20 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 	}
 
 	result.WriteString(`)`)
+	var partitionDDLs []string
+	if !isTemporary && partitionExpression != "" && len(partitionDefs) > 0 {
+		pgPartitionExpr := convertPartitionExpression(partitionExpression)
+		result.WriteString(fmt.Sprintf(` PARTITION BY RANGE (%s)`, pgPartitionExpr))
+		prevUpper := "MINVALUE"
+		for _, partitionDef := range partitionDefs {
+			currentUpper := normalizePartitionBound(partitionDef.lessThan)
+			partitionTableName := fmt.Sprintf(`"%s_%s"`, tableName, partitionDef.name)
+			partitionDDL := fmt.Sprintf(`CREATE TABLE %s PARTITION OF "%s" FOR VALUES FROM (%s) TO (%s)`,
+				partitionTableName, tableName, prevUpper, currentUpper)
+			partitionDDLs = append(partitionDDLs, partitionDDL)
+			prevUpper = currentUpper
+		}
+	}
 	finalDDL := result.String()
 
 	if (!strings.Contains(finalDDL, "CREATE TABLE") && !strings.Contains(finalDDL, "CREATE TEMPORARY TABLE")) || !strings.Contains(finalDDL, "(") || !strings.Contains(finalDDL, ")") {
@@ -847,6 +1159,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		TableComment:   tableComment,
 		ColumnNames:    columnNamesMap,
 		ColumnComments: columnCommentsMap,
+		PartitionDDLs:  partitionDDLs,
 	}, nil
 }
 
