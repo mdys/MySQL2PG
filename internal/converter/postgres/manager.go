@@ -1279,6 +1279,16 @@ func (m *Manager) convertTables(tables []mysql.TableInfo, semaphore chan struct{
 			return err
 		}
 
+		for _, partitionDDL := range pgResult.PartitionDDLs {
+			if err := m.postgresConn.ExecuteDDL(partitionDDL); err != nil {
+				errMsg := fmt.Sprintf("执行表 %s 分区DDL失败: %v", table.Name, err)
+				m.logError(errMsg)
+				<-semaphore
+				m.updateProgress()
+				return err
+			}
+		}
+
 		// 添加表注释
 		if pgResult.TableComment != "" {
 			processedComment := m.processComment(pgResult.TableComment)
