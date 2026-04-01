@@ -381,6 +381,180 @@ func normalizePartitionBound(bound string) string {
 	return trimmed
 }
 
+// toLowerOutsideQuotes 将字符串中非引号包裹内容转换为小写
+func toLowerOutsideQuotes(input string) string {
+	var builder strings.Builder
+	builder.Grow(len(input))
+
+	inSingleQuote := false
+	inDoubleQuote := false
+	escapeNext := false
+
+	for _, char := range input {
+		if escapeNext {
+			builder.WriteRune(char)
+			escapeNext = false
+			continue
+		}
+
+		switch char {
+		case '\\':
+			builder.WriteRune(char)
+			escapeNext = true
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+			builder.WriteRune(char)
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+			builder.WriteRune(char)
+		default:
+			if inSingleQuote || inDoubleQuote {
+				builder.WriteRune(char)
+			} else {
+				builder.WriteRune([]rune(strings.ToLower(string(char)))[0])
+			}
+		}
+	}
+
+	return builder.String()
+}
+
+// convertMySQLDateFormatToPostgres 将MySQL日期格式转换为PostgreSQL日期格式
+func convertMySQLDateFormatToPostgres(mysqlFormat string) string {
+	replacements := []struct {
+		mysql string
+		pg    string
+	}{
+		{"%Y", "YYYY"},
+		{"%m", "MM"},
+		{"%d", "DD"},
+		{"%H", "HH24"},
+		{"%h", "HH12"},
+		{"%I", "HH12"},
+		{"%i", "MI"},
+		{"%s", "SS"},
+		{"%f", "US"},
+	}
+
+	converted := mysqlFormat
+	for _, replacement := range replacements {
+		converted = strings.ReplaceAll(converted, replacement.mysql, replacement.pg)
+	}
+
+	return converted
+}
+
+// convertGeneratedFunctionsToPostgres 将生成列中的MySQL函数转换为PostgreSQL表达式
+func convertGeneratedFunctionsToPostgres(typeDefinition string) string {
+	reJSONUnquoteExtract := regexp.MustCompile(`(?is)json_unquote\s*\(\s*json_extract\s*\(\s*([^,]+?)\s*,\s*'\s*\$\.([^']+)\s*'\s*\)\s*\)`)
+	typeDefinition = reJSONUnquoteExtract.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reJSONUnquoteExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return fmt.Sprintf("(%s ->> '%s')", strings.TrimSpace(match[1]), strings.TrimSpace(match[2]))
+	})
+
+	reJSONExtract := regexp.MustCompile(`(?is)json_extract\s*\(\s*([^,]+?)\s*,\s*'\s*\$\.([^']+)\s*'\s*\)`)
+	typeDefinition = reJSONExtract.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reJSONExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return fmt.Sprintf("(%s -> '%s')", strings.TrimSpace(match[1]), strings.TrimSpace(match[2]))
+	})
+
+	reStrToDate := regexp.MustCompile(`(?is)str_to_date\s*\(\s*([^,]+?)\s*,\s*'([^']+)'\s*\)`)
+	typeDefinition = reStrToDate.ReplaceAllStringFunc(typeDefinition, func(m string) string {
+		match := reStrToDate.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		pgFormat := convertMySQLDateFormatToPostgres(strings.TrimSpace(match[2]))
+		return fmt.Sprintf("to_timestamp(%s, '%s')::timestamp", strings.TrimSpace(match[1]), pgFormat)
+	})
+
+	return typeDefinition
+}
+
+// shouldFallbackGeneratedToPlainColumn 判断是否需要将生成列降级为普通列
+func shouldFallbackGeneratedToPlainColumn(typeDefinition string) bool {
+	lowerType := strings.ToLower(typeDefinition)
+	if !strings.Contains(lowerType, "generated always as") {
+		return false
+	}
+	return strings.Contains(lowerType, "to_timestamp(")
+}
+
+// stripGeneratedClause 移除生成列子句，仅保留基础类型定义
+func stripGeneratedClause(typeDefinition string) string {
+	lowerType := strings.ToLower(typeDefinition)
+	generatedIdx := strings.Index(lowerType, " generated always as")
+	if generatedIdx == -1 {
+		return strings.TrimSpace(typeDefinition)
+	}
+	return strings.TrimSpace(typeDefinition[:generatedIdx])
+}
+
+// isGeneratedColumnDefinition 判断字段定义是否为生成列定义
+func isGeneratedColumnDefinition(typeDefinition string) bool {
+	return strings.Contains(strings.ToLower(typeDefinition), "generated always as")
+}
+
+// extractGeneratedExpression 提取生成列表达式中的核心表达式
+func extractGeneratedExpression(typeDefinition string) (string, bool) {
+	lowerType := strings.ToLower(typeDefinition)
+	generatedIdx := strings.Index(lowerType, "generated always as")
+	if generatedIdx == -1 {
+		return "", false
+	}
+
+	openRelIdx := strings.Index(typeDefinition[generatedIdx:], "(")
+	if openRelIdx == -1 {
+		return "", false
+	}
+	openIdx := generatedIdx + openRelIdx
+	closeIdx := findMatchingParen(typeDefinition, openIdx)
+	if closeIdx == -1 || closeIdx <= openIdx {
+		return "", false
+	}
+
+	return strings.TrimSpace(typeDefinition[openIdx+1 : closeIdx]), true
+}
+
+// expandGeneratedExpressionDependencies 展开生成列表达式中对已生成列的依赖引用
+func expandGeneratedExpressionDependencies(expression string, generatedExpressionMap map[string]string) string {
+	expanded := expression
+	changed := true
+
+	for changed {
+		changed = false
+		for generatedColumn, generatedExpression := range generatedExpressionMap {
+			quotedPattern := regexp.MustCompile(`(?i)"` + regexp.QuoteMeta(generatedColumn) + `"`)
+			unquotedPattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(generatedColumn) + `\b`)
+
+			replacement := "(" + generatedExpression + ")"
+			afterQuoted := quotedPattern.ReplaceAllString(expanded, replacement)
+			if afterQuoted != expanded {
+				expanded = afterQuoted
+				changed = true
+			}
+
+			afterUnquoted := unquotedPattern.ReplaceAllString(expanded, replacement)
+			if afterUnquoted != expanded {
+				expanded = afterUnquoted
+				changed = true
+			}
+		}
+	}
+
+	return expanded
+}
+
 // cleanTableLevelSettings 清理表级别的引擎、字符集和行格式设置
 func cleanTableLevelSettings(columnsDefinition string) string {
 	// 首先处理分区语法（最长匹配优先）
@@ -584,6 +758,11 @@ func processColumnDefinition(line string, lowercaseColumns bool) (columnName str
 
 // cleanTypeDefinition 清理和规范化类型定义
 func cleanTypeDefinition(typeDefinition string) string {
+	if strings.Contains(strings.ToLower(typeDefinition), "generated always as") {
+		typeDefinition = reCharsetPrefix.ReplaceAllString(typeDefinition, "$1")
+		typeDefinition = convertGeneratedFunctionsToPostgres(typeDefinition)
+	}
+
 	typeDefinition = reTypeMb3Direct.ReplaceAllString(typeDefinition, "$1")
 	typeDefinition = reTypeMb3Any.ReplaceAllString(typeDefinition, "$1")
 	typeDefinition = reMb3Suffix.ReplaceAllString(typeDefinition, "")
@@ -602,7 +781,7 @@ func cleanTypeDefinition(typeDefinition string) string {
 		typeDefinition = strings.ReplaceAll(typeDefinition, replacements[i], replacements[i+1])
 	}
 
-	lowerTypeDef := strings.ToLower(typeDefinition)
+	lowerTypeDef := toLowerOutsideQuotes(typeDefinition)
 	lowerTypeDef = reMySQLCharsetClause.ReplaceAllString(lowerTypeDef, "")
 	lowerTypeDef = reMySQLCollateClause.ReplaceAllString(lowerTypeDef, "")
 
@@ -764,6 +943,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 	var columnDefinitions []string
 	var primaryKeyColumn string
 	columnNames := make(map[string]string)
+	generatedExpressionMap := make(map[string]string)
 
 	var incompleteTypeDef bool
 	var partialTypeDef string
@@ -913,6 +1093,18 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		}
 
 		typeDefinition = cleanTypeDefinition(typeDefinition)
+		if shouldFallbackGeneratedToPlainColumn(typeDefinition) {
+			typeDefinition = stripGeneratedClause(typeDefinition)
+		}
+		if isGeneratedColumnDefinition(typeDefinition) {
+			if rawExpression, ok := extractGeneratedExpression(typeDefinition); ok {
+				expandedExpression := expandGeneratedExpressionDependencies(rawExpression, generatedExpressionMap)
+				if expandedExpression != rawExpression {
+					typeDefinition = strings.Replace(typeDefinition, rawExpression, expandedExpression, 1)
+				}
+				generatedExpressionMap[strings.ToLower(columnName)] = expandedExpression
+			}
+		}
 		newColumnDefinition := fmt.Sprintf(`"%s" %s`, columnName, typeDefinition)
 		columnDefinitions = append(columnDefinitions, newColumnDefinition)
 	}
