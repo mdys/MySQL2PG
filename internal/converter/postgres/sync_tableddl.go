@@ -19,6 +19,8 @@ var (
 	reComplexCharsetVarchar  = regexp.MustCompile(`(?i)(varchar\(\d+\))\s*character\s+char\(\d+\)\s*ascii`)
 	reComplexCharset         = regexp.MustCompile(`(?i)(char\(\d+\)|varchar\(\d+\)|text)\s*character\s+(char\(\d+\)|varchar\(\d+\))`)
 	reMb4Suffix              = regexp.MustCompile(`(?i)(text|longtext|mediumtext|tinytext|blob|longblob|mediumblob|tinyblob|binary|varbinary|varchar\(\d+\)|char\(\d+\))mb4`)
+	reMySQLCharsetClause     = regexp.MustCompile(`(?i)\s+(?:character\s+set|charset)\s*=?\s*[\w]+`)
+	reMySQLCollateClause     = regexp.MustCompile(`(?i)\s+collate\s+[\w]+`)
 
 	// 默认值处理相关正则
 	reDefaultEqual            = regexp.MustCompile(`default\s*=\s*`)
@@ -500,6 +502,8 @@ func cleanTypeDefinition(typeDefinition string) string {
 	}
 
 	lowerTypeDef := strings.ToLower(typeDefinition)
+	lowerTypeDef = reMySQLCharsetClause.ReplaceAllString(lowerTypeDef, "")
+	lowerTypeDef = reMySQLCollateClause.ReplaceAllString(lowerTypeDef, "")
 
 	// 批量移除字符集相关字符串
 	charsetRemovals := []string{
