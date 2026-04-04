@@ -153,7 +153,7 @@ func SyncTableData(mysqlConn *mysql.Connection, postgresConn *postgres.Connectio
 
 			batchInsertSize := config.Conversion.Limits.BatchInsertSize
 			if batchInsertSize <= 0 {
-				batchInsertSize = 10000 // 默认值，提高到10000以提高性能
+				batchInsertSize = 50000 // 默认值，与 MaxRowsPerBatch 保持一致以减少 CopyFrom 调用次数
 			}
 
 			// 尝试使用基于主键的分页
@@ -230,7 +230,7 @@ func SyncTableData(mysqlConn *mysql.Connection, postgresConn *postgres.Connectio
 				}
 
 				// 使用批量插入并获取实际处理的行数
-				currentBatchSize, lastValue, err = postgresConn.BatchInsertDataWithTransactionAndGetLastValue(tx, table.Name, columns, columnTypes, batchInsertSize, primaryKey, rows)
+				currentBatchSize, lastValue, err = postgresConn.BatchInsertDataWithTransactionAndGetLastValue(tx, table.Name, columns, columnTypes, batchInsertSize, primaryKey, config.Conversion.Options.LowercaseColumns, rows)
 				rows.Close() // 确保关闭rows
 
 				if err != nil {

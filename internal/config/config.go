@@ -189,7 +189,7 @@ func (c *Config) ValidateConfig() error {
 		c.Conversion.Limits.MaxUsersPerBatch = 10 // 默认值
 	}
 	if c.Conversion.Limits.MaxRowsPerBatch <= 0 {
-		c.Conversion.Limits.MaxRowsPerBatch = 1000 // 默认值
+		c.Conversion.Limits.MaxRowsPerBatch = 50000 // 默认值，与 BatchInsertSize 保持一致以减少网络往返
 	}
 
 	return nil
