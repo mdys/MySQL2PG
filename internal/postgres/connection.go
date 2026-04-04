@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +25,143 @@ type Connection struct {
 }
 
 var charZeroPattern = regexp.MustCompile(`(?i)char\s*\(\s*0\s*\)`)
+
+// 预编译的零日期 []byte 常量，避免在热路径中重复 string() 转换
+var (
+	zeroDateTimeBytes1 = []byte("0000-00-00 00:00:00")
+	zeroDateTimeBytes2 = []byte("0000-00-00")
+)
+
+// rowSlicePool 复用 []interface{} 切片，避免每行都 make 新切片
+// 支持最多 128 列（通常足够覆盖所有业务场景）
+const maxPoolColumns = 128
+var rowSlicePool = &sync.Pool{
+	New: func() interface{} {
+		s := make([]interface{}, maxPoolColumns)
+		return s
+	},
+}
+
+// typedDest 类型化 Scan 目标，避免 *interface{} 导致的堆分配
+type typedDest struct {
+	value    interface{} // 实际类型: *int64, *string, *[]byte, *float64, *time.Time
+	isTime   bool        // 是否需要特殊处理 time.Time
+}
+
+// makeTypedDestinations 根据 MySQL 列类型创建类型化的 Scan 目标
+// 避免 *interface{} 导致的每次 Scan 都分配具体对象的问题
+func makeTypedDestinations(columns []string, columnTypes map[string]string) []typedDest {
+	dests := make([]typedDest, len(columns))
+	for i, col := range columns {
+		colType := ""
+		if columnTypes != nil {
+			colType = getColumnTypeByName(col, columnTypes)
+		}
+		dests[i] = makeTypedDest(colType)
+	}
+	return dests
+}
+
+// makeTypedDest 根据列类型创建单个 Scan 目标
+func makeTypedDest(colType string) typedDest {
+	if isBinaryLikeType(colType) || isGeometryLikeType(colType) {
+		return typedDest{value: new([]byte)}
+	}
+	if colType != "" {
+		lower := strings.ToLower(colType)
+		if strings.Contains(lower, "tinyint") || strings.Contains(lower, "smallint") ||
+			strings.Contains(lower, "mediumint") || strings.Contains(lower, "int") ||
+			strings.Contains(lower, "bigint") || strings.Contains(lower, "year") ||
+			strings.Contains(lower, "serial") {
+			return typedDest{value: new(int64)}
+		}
+		if strings.Contains(lower, "decimal") || strings.Contains(lower, "numeric") {
+			// decimal 返回 string（避免精度丢失）
+			return typedDest{value: new(string)}
+		}
+		if strings.Contains(lower, "float") || strings.Contains(lower, "real") {
+			return typedDest{value: new(float64)}
+		}
+		if strings.Contains(lower, "double") {
+			return typedDest{value: new(float64)}
+		}
+		if strings.Contains(lower, "bit") {
+			return typedDest{value: new([]byte)}
+		}
+		if strings.Contains(lower, "bool") {
+			return typedDest{value: new(bool)}
+		}
+		// date/time 类型
+		if strings.Contains(lower, "datetime") || strings.Contains(lower, "timestamp") {
+			return typedDest{value: new(string), isTime: true}
+		}
+		if strings.Contains(lower, "date") {
+			return typedDest{value: new(string)}
+		}
+		if strings.Contains(lower, "time") {
+			return typedDest{value: new(string)}
+		}
+	}
+	// 默认使用 string（MySQL 驱动对 VARCHAR/TEXT 返回 []byte，但 string 更安全）
+	return typedDest{value: new(string)}
+}
+
+// resetTypedDestinations 重置类型化目标以便复用
+// 对于指针类型，只需重置指向的零值
+func resetTypedDestinations(dests []typedDest) {
+	for i := range dests {
+		switch v := dests[i].value.(type) {
+		case *int64:
+			*v = 0
+		case *string:
+			*v = ""
+		case *[]byte:
+			*v = nil
+		case *float64:
+			*v = 0
+		case *bool:
+			*v = false
+		case *time.Time:
+			*v = time.Time{}
+			dests[i].isTime = true
+		}
+	}
+}
+
+// scanDestinations 将类型化目标转换为 Scan 可以接受的 *interface{} 参数
+func scanDestinations(dests []typedDest) []interface{} {
+	ptrs := make([]interface{}, len(dests))
+	for i := range dests {
+		ptrs[i] = dests[i].value
+	}
+	return ptrs
+}
+
+// getTypedValue 从类型化目标中提取值（解引用）
+func getTypedValue(dest *typedDest) interface{} {
+	switch v := dest.value.(type) {
+	case *int64:
+		return *v
+	case *string:
+		return *v
+	case *[]byte:
+		if *v == nil {
+			return nil
+		}
+		return *v
+	case *float64:
+		return *v
+	case *bool:
+		return *v
+	case *time.Time:
+		if v.IsZero() {
+			return nil
+		}
+		return *v
+	default:
+		return v
+	}
+}
 
 // NewConnection 创建新的PostgreSQL连接
 func NewConnection(config *config.PostgreSQLConfig) (*Connection, error) {
@@ -478,12 +617,15 @@ func convertBatchColumnValue(columnName string, value interface{}, columnTypes m
 		if isBinaryLikeType(columnType) {
 			return val
 		}
-		sVal := string(val)
-		if sVal == "0000-00-00 00:00:00" || sVal == "0000-00-00" {
+		// 零日期检测：使用 bytes.Equal 避免 string() 分配
+		if bytes.Equal(val, zeroDateTimeBytes1) || bytes.Equal(val, zeroDateTimeBytes2) {
 			return nil
 		}
-		return sVal
+		// pgx.CopyFrom 原生支持 []byte → TEXT/VARCHAR，不需要转 string
+		// pgx 的 Text format encoder 会将 []byte 直接作为 UTF-8 文本发送
+		return val
 	case string:
+		// 零日期检测
 		if val == "0000-00-00 00:00:00" || val == "0000-00-00" {
 			return nil
 		}
@@ -493,6 +635,12 @@ func convertBatchColumnValue(columnName string, value interface{}, columnTypes m
 			return nil
 		}
 		return val
+	case int64:
+		return val
+	case float64:
+		return val
+	case bool:
+		return val
 	default:
 		return val
 	}
@@ -500,24 +648,32 @@ func convertBatchColumnValue(columnName string, value interface{}, columnTypes m
 
 
 // BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
-func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string) ([]string, string) {
+func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string, lowercaseColumns bool) ([]string, string) {
 	copyColumns := make([]string, len(columns))
 	for i, col := range columns {
-		copyColumns[i] = strings.ToLower(col)
+		if lowercaseColumns {
+			copyColumns[i] = strings.ToLower(col)
+		} else {
+			copyColumns[i] = col
+		}
 	}
 	if primaryKey == "" {
 		return copyColumns, ""
 	}
-	lowerPrimaryKey := strings.ToLower(primaryKey)
 	for i, col := range columns {
 		if strings.EqualFold(col, primaryKey) {
 			return copyColumns, copyColumns[i]
 		}
 	}
-	return copyColumns, lowerPrimaryKey
+	// fallback: 如果没找到，使用转换后的主键名
+	resolvedPrimaryKey := primaryKey
+	if lowercaseColumns {
+		resolvedPrimaryKey = strings.ToLower(primaryKey)
+	}
+	return copyColumns, resolvedPrimaryKey
 }
 
-func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, tableName string, columns []string, columnTypes map[string]string, batchSize int, primaryKey string, rows *sql.Rows) (int, interface{}, error) {
+func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, tableName string, columns []string, columnTypes map[string]string, batchSize int, primaryKey string, lowercaseColumns bool, rows *sql.Rows) (int, interface{}, error) {
 	ctx := context.Background()
 
 	// 准备批量插入
@@ -530,7 +686,7 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		effectiveBatchSize = 10000 // 确保至少有一个合理的默认值
 	}
 
-	copyColumns, resolvedPrimaryKey := resolveCopyColumnsAndPrimaryKey(columns, primaryKey)
+	copyColumns, resolvedPrimaryKey := resolveCopyColumnsAndPrimaryKey(columns, primaryKey, lowercaseColumns)
 
 	// 跟踪最后一个主键值
 	var lastValue interface{}
@@ -546,32 +702,31 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 		}
 	}
 
-	// 重用values和valuePtrs切片，减少内存分配
-	values := make([]interface{}, len(columns))
-	valuePtrs := make([]interface{}, len(columns))
-	for i := range values {
-		valuePtrs[i] = &values[i]
-	}
+	// 使用类型化 Scan 目标，避免 *interface{} 导致的每次 Scan 都分配具体对象
+	typedDests := makeTypedDestinations(columns, columnTypes)
+	scanPtrs := scanDestinations(typedDests)
+	numCols := len(typedDests)
 
-	// 使用pgx的CopyFrom函数进行高效批量插入
+	// copyRows 存储行数据指针，每个元素从 sync.Pool 复用
 	copyRows := make([][]interface{}, 0, effectiveBatchSize)
 
 	// 处理数据行
 	for rows.Next() {
-		// 扫描行数据
-		if err := rows.Scan(valuePtrs...); err != nil {
+		// 扫描行数据 — 使用类型化指针，避免每次 Scan 分配堆对象
+		if err := rows.Scan(scanPtrs...); err != nil {
 			return 0, nil, fmt.Errorf("扫描行数据失败: %w", err)
 		}
 
 		// 跟踪最后一个主键值
 		if primaryKeyIndex != -1 {
-			lastValue = values[primaryKeyIndex]
+			lastValue = getTypedValue(&typedDests[primaryKeyIndex])
 		}
 
-		// 复制当前行的值到新的切片并进行类型转换
-		rowValues := make([]interface{}, len(values))
-		for i, v := range values {
-			rowValues[i] = convertBatchColumnValue(columns[i], v, columnTypes)
+		// 从 pool 获取 rowValues 切片，避免每行 make 新切片
+		rowValues := rowSlicePool.Get().([]interface{})
+		rowValues = rowValues[:numCols]
+		for i := range typedDests {
+			rowValues[i] = convertBatchColumnValue(columns[i], getTypedValue(&typedDests[i]), columnTypes)
 		}
 		copyRows = append(copyRows, rowValues)
 
@@ -586,18 +741,27 @@ func (c *Connection) BatchInsertDataWithTransactionAndGetLastValue(tx pgx.Tx, ta
 				return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
 			}
 
+			// 将 rowValues 切片返回 pool 复用
+			for _, rv := range copyRows {
+				rowSlicePool.Put(rv)
+			}
+
 			// 重置切片和计数器
-			copyRows = make([][]interface{}, 0, effectiveBatchSize)
+			copyRows = copyRows[:0]
 			rowCount = 0
 		}
 	}
 
 	// 执行剩余的数据
-	if rowCount > 0 {
+	if len(copyRows) > 0 {
 		// 执行CopyFrom，使用转换后的小写列名
 		_, err := tx.CopyFrom(ctx, pgx.Identifier{tableName}, copyColumns, pgx.CopyFromRows(copyRows))
 		if err != nil {
 			return 0, nil, fmt.Errorf("CopyFrom执行失败: %w", err)
+		}
+		// 将 rowValues 切片返回 pool 复用
+		for _, rv := range copyRows {
+			rowSlicePool.Put(rv)
 		}
 	}
 
