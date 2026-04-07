@@ -22,6 +22,9 @@ GRANT ALL PRIVILEGES ON case_04_mb3_suffix TO 'test1'@'%';
 GRANT ALL PRIVILEGES ON case_01_integers TO 'test2'@'%';
 GRANT ALL PRIVILEGES ON case_02_boolean TO 'test2'@'%';
 
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, CREATE VIEW, SHOW VIEW ON *.* TO 'test1'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, CREATE VIEW, SHOW VIEW ON *.* TO 'test2'@'%';
+
 -- 刷新权限
 FLUSH PRIVILEGES;
 
@@ -45,9 +48,14 @@ SELECT
 FROM mysql.tables_priv 
 WHERE User = 'test2' and Db = DATABASE();
 
-DROP USER IF EXISTS 'read_only'@'%';
-CREATE USER 'read_only'@'%' IDENTIFIED BY 'ReadOnly123!@#';
-GRANT SELECT ON case_01_integers TO 'read_only'@'%';
-GRANT SELECT ON case_02_boolean TO 'read_only'@'%';
-GRANT SELECT ON case_03_floats TO 'read_only'@'%';
+
+GRANT SELECT ON case_01_integers TO 'test1'@'%';
+GRANT SELECT ON case_02_boolean TO 'test1'@'%';
+GRANT SELECT ON case_03_floats TO 'test1'@'%';
+
+GRANT SELECT ON case_01_integers TO 'test2'@'%';
+GRANT SELECT ON case_02_boolean TO 'test2'@'%';
+GRANT SELECT ON case_03_floats TO 'test2'@'%';
 FLUSH PRIVILEGES;
+
+

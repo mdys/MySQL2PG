@@ -12,18 +12,18 @@ CONVERSION_FILE=conversion.log
 # 构建项目
 build:
 	@echo "正在构建项目..."
-	@go build -o $(BINARY_NAME) $(SRC_DIR)/main.go
+	@go build -o $(BINARY_NAME) $(SRC_DIR)/
 	@echo "构建完成！可执行文件: $(BINARY_NAME)"
 
 # 运行项目
 run:
 	@echo "正在运行项目..."
-	@go run $(SRC_DIR)/main.go -c $(CONFIG_FILE)
+	@go run $(SRC_DIR)/ -c $(CONFIG_FILE)
 
 # 测试数据库连接
 test-connection:
 	@echo "正在测试数据库连接..."
-	@go run $(SRC_DIR)/main.go -c $(CONFIG_FILE)
+	@go run $(SRC_DIR)/ -c $(CONFIG_FILE)
 
 # 清理构建产物
 clean:

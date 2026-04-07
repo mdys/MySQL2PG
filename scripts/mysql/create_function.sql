@@ -1,6 +1,6 @@
 -- MySQL2PG 复杂测试函数
 -- 生成用于覆盖复杂连接（最多10个表）和逻辑（30-200行）
--- 函数总数：100
+-- 函数总数：110
 --
 -- 函数特点列表：
 -- func_001_complex_analysis: 涉及 4 个表, 特性: 游标+循环+CASE语句+条件判断
@@ -103,6 +103,16 @@
 -- func_098_complex_analysis: 涉及 5 个表, 特性: 游标+循环+CASE语句+条件判断
 -- func_099_complex_analysis: 涉及 7 个表, 特性: 游标+循环+CASE语句+条件判断
 -- func_100_complex_analysis: 涉及 9 个表, 特性: 游标+循环+CASE语句+条件判断
+-- func_101_case_156_order_amount: 涉及 2 个表, 特性: 复合主外键聚合+空值处理
+-- func_102_case_157_extract_bizid: 涉及 JSON 字段, 特性: json_extract+json_unquote
+-- func_103_case_158_period_key: 涉及 时间类型, 特性: datetime(6)+date_format
+-- func_104_case_159_attachment_size: 涉及 BLOB 字段, 特性: length+单行查询
+-- func_105_case_160_numeric_score: 涉及 高精度数值, 特性: decimal/numeric 聚合
+-- func_106_case_daily_order_item_count: 涉及 复合外键子表, 特性: 按单统计明细数
+-- func_107_case_daily_order_avg_price: 涉及 订单明细金额, 特性: 平均单价计算
+-- func_108_case_daily_payload_event_time: 涉及 JSON 数据, 特性: 事件时间提取
+-- func_109_case_daily_deleted_title: 涉及 文本与标记字段, 特性: 逻辑删除标题拼接
+-- func_110_case_daily_numeric_risk_tag: 涉及 高精度数值, 特性: 风险等级打标
 
 SET GLOBAL log_bin_trust_function_creators = 1;
 
@@ -195,6 +205,161 @@ BEGIN
         SET v_calc_val = v_calc_val + 2;
     END IF;
     RETURN v_result;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_101_case_156_order_amount;
+CREATE FUNCTION func_101_case_156_order_amount(_tenant_id BIGINT UNSIGNED, _order_no VARCHAR(64))
+RETURNS DECIMAL(20,4)
+READS SQL DATA
+BEGIN
+    DECLARE v_amount DECIMAL(20,4) DEFAULT 0.0000;
+    SELECT IFNULL(SUM(c.amount), 0.0000) INTO v_amount
+    FROM case_156_orders_child c
+    INNER JOIN case_156_orders_parent p
+        ON c.tenant_id = p.tenant_id AND c.order_no = p.order_no
+    WHERE c.tenant_id = _tenant_id AND c.order_no = _order_no;
+    RETURN v_amount;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_102_case_157_extract_bizid;
+CREATE FUNCTION func_102_case_157_extract_bizid(_payload JSON)
+RETURNS VARCHAR(64)
+DETERMINISTIC
+BEGIN
+    RETURN JSON_UNQUOTE(JSON_EXTRACT(_payload, '$.bizId'));
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_103_case_158_period_key;
+CREATE FUNCTION func_103_case_158_period_key(_dt DATETIME(6))
+RETURNS CHAR(7)
+DETERMINISTIC
+BEGIN
+    RETURN DATE_FORMAT(_dt, '%Y-%m');
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_104_case_159_attachment_size;
+CREATE FUNCTION func_104_case_159_attachment_size(_id BIGINT UNSIGNED)
+RETURNS BIGINT
+READS SQL DATA
+BEGIN
+    DECLARE v_size BIGINT DEFAULT 0;
+    SELECT IFNULL(LENGTH(attachment), 0) INTO v_size
+    FROM case_159_text_blob_mix
+    WHERE id = _id
+    LIMIT 1;
+    RETURN v_size;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_105_case_160_numeric_score;
+CREATE FUNCTION func_105_case_160_numeric_score(_id BIGINT UNSIGNED)
+RETURNS DECIMAL(65,30)
+READS SQL DATA
+BEGIN
+    DECLARE v_score DECIMAL(65,30) DEFAULT 0.000000000000000000000000000000;
+    SELECT IFNULL(dec_high, 0) + IFNULL(ratio, 0) + IFNULL(int_signed, 0) INTO v_score
+    FROM case_160_numeric_boundary
+    WHERE id = _id
+    LIMIT 1;
+    RETURN v_score;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_106_case_daily_order_item_count;
+CREATE FUNCTION func_106_case_daily_order_item_count(_tenant_id BIGINT UNSIGNED, _order_no VARCHAR(64))
+RETURNS INT
+READS SQL DATA
+BEGIN
+    DECLARE v_cnt INT DEFAULT 0;
+    SELECT COUNT(*) INTO v_cnt
+    FROM case_156_orders_child
+    WHERE tenant_id = _tenant_id AND order_no = _order_no;
+    RETURN v_cnt;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_107_case_daily_order_avg_price;
+CREATE FUNCTION func_107_case_daily_order_avg_price(_tenant_id BIGINT UNSIGNED, _order_no VARCHAR(64))
+RETURNS DECIMAL(18,4)
+READS SQL DATA
+BEGIN
+    DECLARE v_avg DECIMAL(18,4) DEFAULT 0.0000;
+    SELECT IFNULL(AVG(unit_price), 0.0000) INTO v_avg
+    FROM case_156_orders_child
+    WHERE tenant_id = _tenant_id AND order_no = _order_no;
+    RETURN v_avg;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_108_case_daily_payload_event_time;
+CREATE FUNCTION func_108_case_daily_payload_event_time(_id BIGINT UNSIGNED)
+RETURNS DATETIME(3)
+READS SQL DATA
+BEGIN
+    DECLARE v_dt DATETIME(3);
+    SELECT STR_TO_DATE(
+               JSON_UNQUOTE(JSON_EXTRACT(payload, '$.eventTime')),
+               '%Y-%m-%d %H:%i:%s.%f'
+           )
+      INTO v_dt
+    FROM case_157_json_generated_index
+    WHERE id = _id
+    LIMIT 1;
+    RETURN v_dt;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_109_case_daily_deleted_title;
+CREATE FUNCTION func_109_case_daily_deleted_title(_id BIGINT UNSIGNED)
+RETURNS VARCHAR(255)
+READS SQL DATA
+BEGIN
+    DECLARE v_title VARCHAR(255) DEFAULT '';
+    DECLARE v_deleted TINYINT(1) DEFAULT 0;
+    SELECT IFNULL(title, ''), IFNULL(is_deleted, 0)
+      INTO v_title, v_deleted
+    FROM case_159_text_blob_mix
+    WHERE id = _id
+    LIMIT 1;
+    IF v_deleted = 1 THEN
+        RETURN CONCAT('[DELETED] ', v_title);
+    END IF;
+    RETURN v_title;
+END //
+DELIMITER ;
+
+DELIMITER //
+DROP FUNCTION IF EXISTS func_110_case_daily_numeric_risk_tag;
+CREATE FUNCTION func_110_case_daily_numeric_risk_tag(_id BIGINT UNSIGNED)
+RETURNS VARCHAR(16)
+READS SQL DATA
+BEGIN
+    DECLARE v_dec_high DECIMAL(65,30) DEFAULT 0;
+    DECLARE v_ratio NUMERIC(20,10) DEFAULT 0;
+    SELECT IFNULL(dec_high, 0), IFNULL(ratio, 0)
+      INTO v_dec_high, v_ratio
+    FROM case_160_numeric_boundary
+    WHERE id = _id
+    LIMIT 1;
+    IF v_dec_high >= 1000000000000 OR v_ratio >= 100000 THEN
+        RETURN 'HIGH';
+    ELSEIF v_dec_high >= 1000000 OR v_ratio >= 1000 THEN
+        RETURN 'MEDIUM';
+    END IF;
+    RETURN 'LOW';
 END //
 DELIMITER ;
 

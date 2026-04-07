@@ -20,6 +20,12 @@ func main() {
 		http.ListenAndServe("localhost:6060", nil)
 	}()
 
+	// 检测 report 子命令
+	if isReport, reportArgs := detectReportCommand(os.Args[1:]); isReport {
+		runReport(reportArgs)
+		return
+	}
+
 	// 解析命令行参数
 	var configPath string
 	for i := 1; i < len(os.Args); i++ {
@@ -163,6 +169,7 @@ func showHelp() {
 	fmt.Println("使用方法:")
 	fmt.Println("  mysql2pg [配置文件路径]")
 	fmt.Println("  mysql2pg -c [配置文件路径]")
+	fmt.Println("  mysql2pg report -l <conversion.log>  从日志生成HTML报告")
 	fmt.Println("  mysql2pg -h|--help 显示帮助信息")
 	fmt.Println()
 	fmt.Println("配置文件说明:")
