@@ -35,6 +35,7 @@ var (
 // rowSlicePool 复用 []interface{} 切片，避免每行都 make 新切片
 // 支持最多 128 列（通常足够覆盖所有业务场景）
 const maxPoolColumns = 128
+
 var rowSlicePool = &sync.Pool{
 	New: func() interface{} {
 		s := make([]interface{}, maxPoolColumns)
@@ -44,8 +45,8 @@ var rowSlicePool = &sync.Pool{
 
 // typedDest 类型化 Scan 目标，避免 *interface{} 导致的堆分配
 type typedDest struct {
-	value    interface{} // 实际类型: *int64, *string, *[]byte, *float64, *time.Time
-	isTime   bool        // 是否需要特殊处理 time.Time
+	value  interface{}
+	isTime bool // 是否需要特殊处理 time.Time
 }
 
 // makeTypedDestinations 根据 MySQL 列类型创建类型化的 Scan 目标
@@ -73,37 +74,34 @@ func makeTypedDest(colType string) typedDest {
 			strings.Contains(lower, "mediumint") || strings.Contains(lower, "int") ||
 			strings.Contains(lower, "bigint") || strings.Contains(lower, "year") ||
 			strings.Contains(lower, "serial") {
-			return typedDest{value: new(int64)}
+			return typedDest{value: new(sql.NullInt64)}
 		}
 		if strings.Contains(lower, "decimal") || strings.Contains(lower, "numeric") {
-			// decimal 返回 string（避免精度丢失）
-			return typedDest{value: new(string)}
+			return typedDest{value: new(sql.NullString)}
 		}
 		if strings.Contains(lower, "float") || strings.Contains(lower, "real") {
-			return typedDest{value: new(float64)}
+			return typedDest{value: new(sql.NullFloat64)}
 		}
 		if strings.Contains(lower, "double") {
-			return typedDest{value: new(float64)}
+			return typedDest{value: new(sql.NullFloat64)}
 		}
 		if strings.Contains(lower, "bit") {
 			return typedDest{value: new([]byte)}
 		}
 		if strings.Contains(lower, "bool") {
-			return typedDest{value: new(bool)}
+			return typedDest{value: new(sql.NullBool)}
 		}
-		// date/time 类型
 		if strings.Contains(lower, "datetime") || strings.Contains(lower, "timestamp") {
-			return typedDest{value: new(string), isTime: true}
+			return typedDest{value: new(sql.NullString), isTime: true}
 		}
 		if strings.Contains(lower, "date") {
-			return typedDest{value: new(string)}
+			return typedDest{value: new(sql.NullString)}
 		}
 		if strings.Contains(lower, "time") {
-			return typedDest{value: new(string)}
+			return typedDest{value: new(sql.NullString)}
 		}
 	}
-	// 默认使用 string（MySQL 驱动对 VARCHAR/TEXT 返回 []byte，但 string 更安全）
-	return typedDest{value: new(string)}
+	return typedDest{value: new(sql.NullString)}
 }
 
 // resetTypedDestinations 重置类型化目标以便复用
@@ -111,16 +109,16 @@ func makeTypedDest(colType string) typedDest {
 func resetTypedDestinations(dests []typedDest) {
 	for i := range dests {
 		switch v := dests[i].value.(type) {
-		case *int64:
-			*v = 0
-		case *string:
-			*v = ""
+		case *sql.NullInt64:
+			*v = sql.NullInt64{}
+		case *sql.NullString:
+			*v = sql.NullString{}
 		case *[]byte:
 			*v = nil
-		case *float64:
-			*v = 0
-		case *bool:
-			*v = false
+		case *sql.NullFloat64:
+			*v = sql.NullFloat64{}
+		case *sql.NullBool:
+			*v = sql.NullBool{}
 		case *time.Time:
 			*v = time.Time{}
 			dests[i].isTime = true
@@ -140,19 +138,31 @@ func scanDestinations(dests []typedDest) []interface{} {
 // getTypedValue 从类型化目标中提取值（解引用）
 func getTypedValue(dest *typedDest) interface{} {
 	switch v := dest.value.(type) {
-	case *int64:
-		return *v
-	case *string:
-		return *v
+	case *sql.NullInt64:
+		if !v.Valid {
+			return nil
+		}
+		return v.Int64
+	case *sql.NullString:
+		if !v.Valid {
+			return nil
+		}
+		return v.String
 	case *[]byte:
 		if *v == nil {
 			return nil
 		}
 		return *v
-	case *float64:
-		return *v
-	case *bool:
-		return *v
+	case *sql.NullFloat64:
+		if !v.Valid {
+			return nil
+		}
+		return v.Float64
+	case *sql.NullBool:
+		if !v.Valid {
+			return nil
+		}
+		return v.Bool
 	case *time.Time:
 		if v.IsZero() {
 			return nil
@@ -645,7 +655,6 @@ func convertBatchColumnValue(columnName string, value interface{}, columnTypes m
 		return val
 	}
 }
-
 
 // BatchInsertDataWithTransactionAndGetLastValue 在事务中批量插入数据并获取最后一个主键值
 func resolveCopyColumnsAndPrimaryKey(columns []string, primaryKey string, lowercaseColumns bool) ([]string, string) {

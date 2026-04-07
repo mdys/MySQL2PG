@@ -1772,6 +1772,24 @@ func (m *Manager) generateSummaryTable() {
 		fmt.Printf("| %-22s | %-14s | %-21.2f |\n", "总耗时", "", totalDuration)
 		fmt.Println("+--------------------------+----------------+-----------------------+")
 	}
+
+	// 同时写入日志文件（供 report 命令解析）
+	m.Log("----------------------------------------------------------------------")
+	m.Log("各阶段及耗时汇总如下:")
+	m.Log("+--------------------------+----------------+-----------------------+")
+	m.Log("| 阶段                     | 对象数量       | 耗时(秒)              |")
+	m.Log("+--------------------------+----------------+-----------------------+")
+
+	var totalDuration float64
+	for _, stat := range m.conversionStats {
+		duration := stat.EndTime.Sub(stat.StartTime).Seconds()
+		totalDuration += duration
+		m.Log("| %-20s | %-14d | %-21.2f |", stat.StageName, stat.ObjectCount, duration)
+	}
+
+	m.Log("+--------------------------+----------------+-----------------------+")
+	m.Log("| %-22s | %-14s | %-21.2f |", "总耗时", "", totalDuration)
+	m.Log("+--------------------------+----------------+-----------------------+")
 }
 
 // centerText 居中文本
@@ -1799,6 +1817,18 @@ func (m *Manager) displayInconsistentTables() {
 			}
 			fmt.Println("+------------------+----------------+------------------+")
 		}
+
+		// 同时写入日志文件（供 report 命令解析）
+		m.Log("+------------------+----------------+------------------+")
+		m.Log("| 数据量校验不一致的表统计:                            |")
+		m.Log("+------------------+----------------+------------------+")
+		m.Log("| 表名             | MySQL数据量    | PostgreSQL数据量 |")
+		m.Log("+------------------+----------------+------------------+")
+		for _, table := range m.inconsistentTables {
+			m.Log("| %-16s | %-14d | %-16d |", table.TableName, table.MySQLRowCount, table.PostgresRowCount)
+		}
+		m.Log("+------------------+----------------+------------------+")
+
 		m.Log("共发现 %d 个表数据校验不一致", len(m.inconsistentTables))
 	}
 }

@@ -304,11 +304,21 @@ View conversion accuracy reaches 98%, supporting batch conversion (10 per batch)
 - 5-10x speedup over single-threaded.
 - Adjustable based on system resources.
 
-### 10. Real-time Progress
+### 12. Real-time Progress
 
 - Real-time progress display, updates 1/sec.
 - Shows time statistics per stage.
 - Configurable on/off.
+
+### 13. HTML Migration Reports
+
+- **Command**: `./mysql2pg report -l conversion.log`
+- **Dark terminal aesthetic** with JetBrains Mono font and neon accent colors
+- **Single-file HTML** with inline CSS — no external dependencies
+- **Deduplication**: All log entries deduplicated by table name
+- **Progress tracking**: Shows migration completion status (complete/in-progress)
+- **Sections**: Summary stat cards, performance bar charts, table details, inconsistencies, warnings, errors
+- **Console output**: Stage summary tables and inconsistent table tables are now written to both console AND log files for report parsing
 
 ### 11. Configurable Connection Pools
 
@@ -430,6 +440,31 @@ run:
 # Or using -c flag
 ./mysql2pg -c config.yml
 ```
+
+### 3. Generate HTML Migration Report
+
+```bash
+# Generate report from conversion log
+./mysql2pg report -l conversion.log
+
+# Include error log
+./mysql2pg report -l conversion.log -e errors.log
+
+# Custom output path
+./mysql2pg report -l conversion.log -o my-report.html
+
+# View help
+./mysql2pg report -h
+```
+
+The report generates a **single-file dark-themed HTML** dashboard with:
+- Summary stat cards (Tables, Rows, Views, Indexes, Functions, Errors)
+- Performance bar charts by stage
+- Table details with status badges and error/warning indicators
+- Data inconsistency tables
+- Warnings and errors sections
+- Progress tracking (complete vs in-progress)
+- All entries deduplicated by table name
 
 ## Important Parameters Detailed
 
