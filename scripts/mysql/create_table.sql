@@ -1,13 +1,13 @@
 -- MySQL2PG 测试表定义文件
 -- 包含各种MySQL语法场景，用于测试MySQL到PostgreSQL的转换功能
 -- 
--- 表覆盖范围说明（case_01 ~ case_160）：
+-- 表覆盖范围说明（case_01 ~ case_167）：
 -- 1) case_01 ~ case_40：基础类型与DDL语法（数值、字符集/排序规则、JSON、时间、默认值、自增、约束、生成列、保留字、命名风格等）
 -- 2) case_41 ~ case_80：索引/约束与表特性（外键、全文、空间、复合主键、存储引擎、分区、复制建表、压缩、统计信息等）
 -- 3) case_81 ~ case_120：边界语法与 MySQL 5.7/8.0 常见特性（SRID、长标识符、高精度数值、多值索引、窗口函数、JSON_TABLE、锁相关语法等）
 -- 4) case_121 ~ case_155：业务化建模样例
--- 5) case_156 ~ case_160：新增综合增强场景（复合外键、JSON生成列、时间类型组合、文本二进制混合、数值边界）
--- 总计：160 个测试表案例
+-- 5) case_156 ~ case_167：新增综合增强场景（复合外键、JSON生成列、时间类型组合、文本二进制混合、数值边界、建表方式专项）
+-- 总计：167 个测试表案例
 
 -- 创建整数类型表
 DROP TABLE IF EXISTS case_01_integers;
@@ -2465,3 +2465,107 @@ CREATE TABLE case_160_numeric_boundary (
   UNIQUE KEY uk_serial_no (serial_no),
   INDEX idx_dec_low (dec_low)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数值边界类型组合';
+
+-- 创建临时表语法测试（会话级对象）
+drop table if exists  case_161_temp_orders_stage;
+CREATE TEMPORARY TABLE case_161_temp_orders_stage (
+  id BIGINT NOT NULL,
+  biz_no VARCHAR(64) NOT NULL,
+  payload JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) COMMENT='临时表测试';
+
+-- 创建带表级 AUTO_INCREMENT 起始值的表
+DROP TABLE IF EXISTS case_162_auto_inc_option;
+CREATE TABLE case_162_auto_inc_option (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB AUTO_INCREMENT=100000 DEFAULT CHARSET=utf8mb4 COMMENT='表级自增起始值测试';
+
+-- 创建外键动作补齐测试表（RESTRICT / NO ACTION）
+DROP TABLE IF EXISTS case_163_fk_action_child;
+DROP TABLE IF EXISTS case_163_fk_action_parent;
+CREATE TABLE case_163_fk_action_parent (
+  id BIGINT NOT NULL PRIMARY KEY,
+  code VARCHAR(32) NOT NULL UNIQUE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='外键动作父表';
+
+CREATE TABLE case_163_fk_action_child (
+  id BIGINT NOT NULL PRIMARY KEY,
+  parent_id BIGINT,
+  parent_code VARCHAR(32),
+  CONSTRAINT fk_case_163_parent_id
+    FOREIGN KEY (parent_id) REFERENCES case_163_fk_action_parent(id)
+    ON DELETE RESTRICT
+    ON UPDATE RESTRICT,
+  CONSTRAINT fk_case_163_parent_code
+    FOREIGN KEY (parent_code) REFERENCES case_163_fk_action_parent(code)
+    ON DELETE NO ACTION
+    ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='外键动作子表';
+
+-- 创建自关联外键表（组织树）
+DROP TABLE IF EXISTS case_164_org_tree;
+CREATE TABLE case_164_org_tree (
+  id BIGINT NOT NULL PRIMARY KEY,
+  parent_id BIGINT NULL,
+  org_name VARCHAR(100) NOT NULL,
+  org_level TINYINT NOT NULL DEFAULT 1,
+  sort_no INT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_case_164_parent
+    FOREIGN KEY (parent_id) REFERENCES case_164_org_tree(id)
+    ON DELETE RESTRICT
+    ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自关联组织树';
+
+-- 创建 CHECK ENFORCED / NOT ENFORCED 测试表（MySQL 8.0）
+DROP TABLE IF EXISTS case_165_check_enforced;
+CREATE TABLE case_165_check_enforced (
+  id BIGINT NOT NULL PRIMARY KEY,
+  amount DECIMAL(12,2) NOT NULL,
+  status TINYINT NOT NULL,
+  CONSTRAINT chk_case_165_amount_nonneg CHECK (amount >= 0) ENFORCED,
+  CONSTRAINT chk_case_165_status CHECK (status IN (0, 1, 2)) NOT ENFORCED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MySQL8 CHECK 约束测试';
+
+-- 创建 ENGINE=MEMORY + ROW_FORMAT + COMMENT 组合表
+DROP TABLE IF EXISTS case_166_memory_rowfmt;
+CREATE TABLE case_166_memory_rowfmt (
+  id INT NOT NULL PRIMARY KEY,
+  session_key VARCHAR(64) NOT NULL,
+  session_value VARCHAR(255),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_session_key (session_key)
+) ENGINE=MEMORY ROW_FORMAT=FIXED COMMENT='MEMORY 引擎组合选项测试';
+
+-- 创建 UNION / INSERT_METHOD 测试表（MRG_MYISAM）
+DROP TABLE IF EXISTS case_167_merge_union;
+DROP TABLE IF EXISTS case_167_merge_src_1;
+DROP TABLE IF EXISTS case_167_merge_src_2;
+CREATE TABLE case_167_merge_src_1 (
+  id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  biz_no VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tenant_biz (tenant_id, biz_no)
+) ENGINE=MyISAM COMMENT='MERGE 源表 1';
+
+CREATE TABLE case_167_merge_src_2 (
+  id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  biz_no VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tenant_biz (tenant_id, biz_no)
+) ENGINE=MyISAM COMMENT='MERGE 源表 2';
+
+CREATE TABLE case_167_merge_union (
+  id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  biz_no VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_tenant_biz (tenant_id, biz_no)
+) ENGINE=MRG_MYISAM UNION=(case_167_merge_src_1,case_167_merge_src_2) INSERT_METHOD=LAST COMMENT='MERGE 联合表';

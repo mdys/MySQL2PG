@@ -263,6 +263,47 @@ func (m *Manager) Run() error {
 	// 显示数据不一致表的统计信息
 	m.displayInconsistentTables()
 
+	// 显示完成信息
+	if m.config.Run.ShowConsoleLogs {
+		// 直接从 conversionStats 汇总
+		var totalTables, totalRows, totalViews, totalIndexes int
+		for _, stat := range m.conversionStats {
+			name := stat.StageName
+			switch {
+			case strings.Contains(name, "表结构") || strings.Contains(name, "DDL"):
+				totalTables = stat.ObjectCount
+			case strings.Contains(name, "表数据") || strings.Contains(name, "数据同步"):
+				totalRows = stat.ObjectCount
+			case strings.Contains(name, "视图"):
+				totalViews = stat.ObjectCount
+			case strings.Contains(name, "索引"):
+				totalIndexes = stat.ObjectCount
+			}
+		}
+
+		// 计算总耗时和平均速度
+		var totalDuration float64
+		for _, stat := range m.conversionStats {
+			totalDuration += stat.EndTime.Sub(stat.StartTime).Seconds()
+		}
+		speedStr := ""
+		if totalDuration > 0 && totalRows > 0 {
+			speed := float64(totalRows) / totalDuration
+			if speed >= 1000 {
+				speedStr = fmt.Sprintf("%.1fK rows/s", speed/1000)
+			} else {
+				speedStr = fmt.Sprintf("%.0f rows/s", speed)
+			}
+		}
+
+		fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+		fmt.Println("│  ✅ Conversion Complete                                        │")
+		fmt.Printf("│  📊 %d tables | %d rows | %d views | %d indexes               │\n", totalTables, totalRows, totalViews, totalIndexes)
+		fmt.Printf("│  ⚡ Total: %.2fs | Avg: %s                              │\n", totalDuration, speedStr)
+		fmt.Println("│  📋 Report: ./mysql2pg report -l conversion.log               │")
+		fmt.Println("└─────────────────────────────────────────────────────────────────┘")
+	}
+
 	m.Log("转换完成!")
 	return nil
 }
@@ -364,6 +405,38 @@ func (m *Manager) calculateTotalTasks(tables []mysql.TableInfo, functions []mysq
 	}
 }
 
+// getStageCount 获取启用的阶段数量
+func (m *Manager) getStageCount() int {
+	count := 0
+	if m.config.Conversion.Options.TableDDL {
+		count++
+	}
+	if m.config.Conversion.Options.Data {
+		count++
+	}
+	if m.config.Conversion.Options.View {
+		count++
+	}
+	if m.config.Conversion.Options.Indexes {
+		count++
+	}
+	if m.config.Conversion.Options.Functions {
+		count++
+	}
+	if m.config.Conversion.Options.Users {
+		count++
+	}
+	if m.config.Conversion.Options.Grant || m.config.Conversion.Options.TablePrivileges {
+		count++
+	}
+	return count
+}
+
+// getCurrentStage 获取当前阶段序号（基于已完成的stats数量）
+func (m *Manager) getCurrentStage(baseStage int) int {
+	return baseStage + len(m.conversionStats)
+}
+
 // executeConversion 执行完整的转换流程
 // 按照配置的顺序执行表DDL、数据、索引、函数、视图、用户和权限的转换
 func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.FunctionInfo, indexes []mysql.IndexInfo, views []mysql.ViewInfo, users []mysql.UserInfo, tablePrivileges []mysql.TablePrivInfo) error {
@@ -414,7 +487,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		// 1. 首先执行表DDL转换
 		if m.config.Conversion.Options.TableDDL && len(filteredTables) > 0 {
 			if m.config.Run.ShowConsoleLogs {
-				fmt.Println("\n1. 转换表结构...")
+				fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+				fmt.Printf("│  🚀 Stage 1/%d: 转换表结构 (%d tables)                       │\n", m.getStageCount(), len(filteredTables))
+				fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 			}
 			// 记录开始时间
 			startTime := time.Now()
@@ -456,6 +531,11 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 
 		// 2.1 执行视图转换（在表DDL之后，数据同步之前）
 		if m.config.Conversion.Options.View && len(views) > 0 {
+			if m.config.Run.ShowConsoleLogs {
+				fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+				fmt.Printf("│  🚀 Stage %d/%d: 转换表视图 (%d views)                         │\n", m.getCurrentStage(2), m.getStageCount(), len(views))
+				fmt.Println("└─────────────────────────────────────────────────────────────────┘")
+			}
 			// 记录开始时间
 			startTime := time.Now()
 			batchSize := m.config.Conversion.Limits.MaxDDLPerBatch
@@ -497,7 +577,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		// 2. 接着执行表数据同步
 		if m.config.Conversion.Options.Data && len(filteredTables) > 0 {
 			if m.config.Run.ShowConsoleLogs {
-				fmt.Println("\n2. 同步表数据...")
+				fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+				fmt.Printf("│  🚀 Stage %d/%d: 同步表数据 (%d tables)                        │\n", m.getCurrentStage(2), m.getStageCount(), len(filteredTables))
+				fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 			}
 			// 记录开始时间
 			startTime := time.Now()
@@ -546,7 +628,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		// 3. 然后执行索引同步
 		if m.config.Conversion.Options.Indexes && len(indexes) > 0 {
 			if m.config.Run.ShowConsoleLogs {
-				fmt.Println("\n3. 转换表索引...")
+				fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+				fmt.Printf("│  🚀 Stage %d/%d: 转换表索引 (%d indexes)                       │\n", m.getCurrentStage(3), m.getStageCount(), len(indexes))
+				fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 			}
 			// 记录开始时间
 			startTime := time.Now()
@@ -590,7 +674,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		if m.config.Conversion.Options.Functions {
 			if len(functions) > 0 {
 				if m.config.Run.ShowConsoleLogs {
-					fmt.Println("\n4. 开始转换函数...")
+					fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+					fmt.Printf("│  🚀 Stage %d/%d: 转换函数 (%d functions)                      │\n", m.getCurrentStage(4), m.getStageCount(), len(functions))
+					fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 				}
 				// 记录开始时间
 				startTime := time.Now()
@@ -631,8 +717,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 			} else {
 				// 当functions: true但没有函数时，添加日志提示
 				if m.config.Run.ShowConsoleLogs {
-					fmt.Println("\n4. 开始转换函数...")
-					fmt.Println("未发现任何函数，跳过函数转换")
+					fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+					fmt.Println("│  ⏭ 未发现任何函数，跳过函数转换                                 │")
+					fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 				}
 				m.Log("functions: true，但未发现任何函数，跳过函数转换")
 			}
@@ -642,7 +729,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		if m.config.Conversion.Options.Users {
 			if len(users) > 0 {
 				if m.config.Run.ShowConsoleLogs {
-					fmt.Println("\n5. 开始转换用户...")
+					fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+					fmt.Printf("│  🚀 Stage %d/%d: 转换库用户 (%d users)                          │\n", m.getCurrentStage(5), m.getStageCount(), len(users))
+					fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 				}
 				// 记录开始时间
 				startTime := time.Now()
@@ -694,7 +783,9 @@ func (m *Manager) executeConversion(tables []mysql.TableInfo, functions []mysql.
 		if m.config.Conversion.Options.Grant {
 			if len(filteredTables) > 0 {
 				if m.config.Run.ShowConsoleLogs {
-					fmt.Println("\n7. 转换表权限...")
+					fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
+					fmt.Printf("│  🚀 Stage %d/%d: 转换表权限 (%d tables)                         │\n", m.getCurrentStage(6), m.getStageCount(), len(filteredTables))
+					fmt.Println("└─────────────────────────────────────────────────────────────────┘")
 				}
 				// 记录开始时间
 				startTime := time.Now()
@@ -1217,7 +1308,9 @@ func (m *Manager) convertTables(tables []mysql.TableInfo, semaphore chan struct{
 		}
 
 		// 存储列名映射，用于后续索引转换
+		m.mutex.Lock()
 		m.tableColumnNamesMap[table.Name] = pgResult.ColumnNames
+		m.mutex.Unlock()
 
 		// 先检查表是否存在
 		tableExists, err := m.postgresConn.TableExists(table.Name)

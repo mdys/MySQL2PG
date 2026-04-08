@@ -56,7 +56,8 @@
       "Bash(act_hi_comment)",
       "Bash(10)",
       "Bash(30)",
-      "Bash(eof)"
+      "Bash(eof)",
+      "Bash(npx *)"
     ]
   },
   "$version": 3

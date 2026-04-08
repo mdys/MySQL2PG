@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MySQL2PG 迁移报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e17;
+    --bg-elevated: #111827;
+    --bg-card: #1a2235;
+    --border: #2a3548;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --text-muted: #64748b;
+    --green: #10b981;
+    --green-dim: rgba(16,185,129,.15);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,.15);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,.15);
+    --cyan: #06b6d4;
+    --cyan-dim: rgba(6,182,212,.15);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59,130,246,.15);
+    --purple: #a855f7;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 0;
+    min-height: 100vh;
+  }
+
+  /* Scanline texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.03) 2px,
+      rgba(0,0,0,.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .container {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 32px 24px;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--cyan), var(--blue), var(--purple));
+  }
+  .header-top {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -.02em;
+  }
+  .header h1::before {
+    content: '>';
+    color: var(--cyan);
+    margin-right: 8px;
+  }
+  .header .timestamp {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .header .log-source {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .db-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .db-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+  .db-tag.mysql {
+    background: var(--amber-dim);
+    color: var(--amber);
+    border: 1px solid rgba(245,158,11,.25);
+  }
+  .db-tag.pg {
+    background: var(--blue-dim);
+    color: var(--blue);
+    border: 1px solid rgba(59,130,246,.25);
+  }
+  .arrow {
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  /* Progress bar */
+  .progress-bar-wrap {
+    margin-top: 16px;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width .3s ease;
+  }
+  .progress-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    text-align: right;
+  }
+
+  /* ===== STAT CARDS ===== */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 768px) {
+    .stats { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+    position: relative;
+  }
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 16px; right: 16px;
+    height: 2px;
+    border-radius: 1px;
+  }
+  .stat-card.green::after { background: var(--green); }
+  .stat-card.cyan::after { background: var(--cyan); }
+  .stat-card.amber::after { background: var(--amber); }
+  .stat-card.red::after { background: var(--red); }
+  .stat-card.blue::after { background: var(--blue); }
+  .stat-card.purple::after { background: var(--purple); }
+
+  .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px;
+    font-weight: 700;
+  }
+  .stat-value.green { color: var(--green); }
+  .stat-value.cyan { color: var(--cyan); }
+  .stat-value.amber { color: var(--amber); }
+  .stat-value.red { color: var(--red); }
+  .stat-value.blue { color: var(--blue); }
+  .stat-value.purple { color: var(--purple); }
+
+  /* ===== SECTIONS ===== */
+  .section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-header h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: .02em;
+  }
+  .section-header .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .section-body {
+    padding: 16px 20px;
+  }
+
+  /* ===== STAGE BARS ===== */
+  .stage-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .stage-row:last-child { margin-bottom: 0; }
+  .stage-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    min-width: 110px;
+    white-space: nowrap;
+  }
+  .stage-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 36px;
+    text-align: right;
+  }
+  .bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--blue));
+    border-radius: 3px;
+    transition: width .3s ease;
+  }
+  .stage-dur {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 52px;
+    text-align: right;
+  }
+  .perf-footer {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .perf-footer strong {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  /* ===== TABLES ===== */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
+  td {
+    padding: 9px 12px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td {
+    background: rgba(6,182,212,.04);
+  }
+  .idx {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 40px;
+  }
+  .tname {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .trows {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ===== BADGES ===== */
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    letter-spacing: .02em;
+  }
+  .badge.ok {
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(16,185,129,.25);
+  }
+  .badge.err {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(239,68,68,.25);
+  }
+  .badge.skip {
+    background: var(--amber-dim);
+    color: var(--amber);
+    border: 1px solid rgba(245,158,11,.25);
+  }
+
+  /* Cell indicators */
+  .cell-indicator {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 2px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .cell-indicator.err {
+    background: var(--red-dim);
+    color: var(--red);
+  }
+  .cell-indicator.warn {
+    background: var(--amber-dim);
+    color: var(--amber);
+  }
+
+  /* Diff highlight */
+  .diff {
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  /* ===== LISTS ===== */
+  .error-list, .warn-list {
+    list-style: none;
+    padding: 0;
+  }
+  .error-list li {
+    padding: 10px 14px;
+    background: var(--red-dim);
+    border-left: 3px solid var(--red);
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    word-break: break-all;
+    border-radius: 0 4px 4px 0;
+  }
+  .error-list li.no-error {
+    background: var(--green-dim);
+    border-left-color: var(--green);
+    color: var(--green);
+  }
+  .error-num {
+    font-weight: 700;
+    color: var(--red);
+    margin-right: 8px;
+  }
+  .warn-list li {
+    padding: 10px 14px;
+    background: var(--amber-dim);
+    border-left: 3px solid var(--amber);
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    word-break: break-all;
+    border-radius: 0 4px 4px 0;
+  }
+  .warn-num {
+    font-weight: 700;
+    color: var(--amber);
+    margin-right: 8px;
+  }
+
+  /* ===== INCONSISTENT TABLE ===== */
+  .inconsistent-section .section-header h2 {
+    color: var(--red);
+  }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    text-align: center;
+    padding: 24px 0 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .footer span {
+    color: var(--cyan);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <h1>MySQL2PG 迁移报告</h1>
+      <span class="timestamp">2026-04-08 09:26:12</span>
+    </div>
+    <div class="log-source">Source: conversion.log</div>
+    
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" style="width:100.0%;background:#10b981"></div>
+      </div>
+      <div class="progress-label">100% (198/198) 完成</div>
+  </div>
+
+  <!-- STAT CARDS -->
+  <div class="stats">
+    <div class="stat-card green">
+      <div class="stat-label">Tables</div>
+      <div class="stat-value green">178</div>
+    </div>
+    <div class="stat-card cyan">
+      <div class="stat-label">Rows</div>
+      <div class="stat-value cyan">983,100</div>
+    </div>
+    <div class="stat-card blue">
+      <div class="stat-label">Views</div>
+      <div class="stat-value blue">4</div>
+    </div>
+    <div class="stat-card purple">
+      <div class="stat-label">Indexes</div>
+      <div class="stat-value purple">432</div>
+    </div>
+    <div class="stat-card amber">
+      <div class="stat-label">Functions</div>
+      <div class="stat-value amber">0</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Errors</div>
+      <div class="stat-value red">1</div>
+    </div>
+  </div>
+
+  <!-- PERFORMANCE -->
+  <div class="section">
+    <div class="section-header">
+      <h2>⚡ Performance</h2>
+      <span class="tag">STAGES</span>
+    </div>
+    <div class="section-body">
+      
+        <div class="stage-row">
+          <span class="stage-name">转换表结构</span>
+          <span class="stage-count">178</span>
+          <div class="bar-wrap"><div class="bar" style="width:18.1%"></div></div>
+          <span class="stage-dur">3.52s</span>
+        </div>
+        <div class="stage-row">
+          <span class="stage-name">同步表数据</span>
+          <span class="stage-count">178</span>
+          <div class="bar-wrap"><div class="bar" style="width:100.0%"></div></div>
+          <span class="stage-dur">19.43s</span>
+        </div>
+        <div class="stage-row">
+          <span class="stage-name">转换表索引</span>
+          <span class="stage-count">432</span>
+          <div class="bar-wrap"><div class="bar" style="width:9.2%"></div></div>
+          <span class="stage-dur">1.79s</span>
+        </div>
+        <div class="stage-row">
+          <span class="stage-name">转换库用户</span>
+          <span class="stage-count">5</span>
+          <div class="bar-wrap"><div class="bar" style="width:0.7%"></div></div>
+          <span class="stage-dur">0.14s</span>
+        </div>
+        <div class="stage-row">
+          <span class="stage-name">转换表权限</span>
+          <span class="stage-count">11</span>
+          <div class="bar-wrap"><div class="bar" style="width:14.3%"></div></div>
+          <span class="stage-dur">2.77s</span>
+        </div>
+        <div class="stage-row">
+          <span class="stage-name">转换表视图</span>
+          <span class="stage-count">4</span>
+          <div class="bar-wrap"><div class="bar" style="width:0.4%"></div></div>
+          <span class="stage-dur">0.07s</span>
+        </div>
+      <div class="perf-footer">
+        <span>Total: <strong>53.3s</strong></span>
+        <span>18,441 行/秒</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLE DETAILS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>📋 Tables</h2>
+      <span class="tag">178 items</span>
+    </div>
+    <div class="section-body" style="padding:0;overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Table</th>
+            <th style="text-align:right">Rows</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr>
+          <td class="idx">1</td>
+          <td class="tname">case_63_charset_collation</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">2</td>
+          <td class="tname">case_35_enum_charset</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">3</td>
+          <td class="tname">case_93_fulltext_parser</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">4</td>
+          <td class="tname">case_77_text_keys</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">5</td>
+          <td class="tname">case_107_multi_delete_parent</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">6</td>
+          <td class="tname">case_107_multi_delete_child</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">7</td>
+          <td class="tname">case_109_cte_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">8</td>
+          <td class="tname">case_41_parent</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">9</td>
+          <td class="tname">case_83_long_identifiers</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">10</td>
+          <td class="tname">case_70_utf8mb4_900</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">11</td>
+          <td class="tname">case_02_boolean</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">12</td>
+          <td class="tname">case_33_desc_index</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">13</td>
+          <td class="tname">case_105_upsert_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">14</td>
+          <td class="tname">case_23_weird_syntax</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">15</td>
+          <td class="tname">case_85_numeric_precision_scale</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">16</td>
+          <td class="tname">case_116_multi_valued_index_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">17</td>
+          <td class="tname">case_146_stats_daily</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">18</td>
+          <td class="tname">case_41_foreign_key</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">19</td>
+          <td class="tname">case_03_floats</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">20</td>
+          <td class="tname">case_64_bit_types</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">21</td>
+          <td class="tname">case_132_social_notifications</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">22</td>
+          <td class="tname">case_27_mysql8_check</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">23</td>
+          <td class="tname">case_68_view_simulation</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">24</td>
+          <td class="tname">case_152_edu_enrollments</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">25</td>
+          <td class="tname">case_113_optimizer_hint_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">26</td>
+          <td class="tname">case_108_load_data_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">27</td>
+          <td class="tname">case_159_text_blob_mix</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">28</td>
+          <td class="tname">case_56_encrypted</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">29</td>
+          <td class="tname">case_86_zerofill_variants</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">30</td>
+          <td class="tname">case_106_replace_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">31</td>
+          <td class="tname">case_25_mysql8_reserved</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">32</td>
+          <td class="tname">case_128_finance_accounts</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">33</td>
+          <td class="tname">CASE_36_UPPERCASE</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">34</td>
+          <td class="tname">case_52_copy_as</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">35</td>
+          <td class="tname">case_82_wide_table</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">36</td>
+          <td class="tname">case_117_nowait_skip_locked_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">37</td>
+          <td class="tname">act_hi_comment</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">38</td>
+          <td class="tname">case_153_med_medical_records</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">39</td>
+          <td class="tname">case_144_api_logs</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">40</td>
+          <td class="tname">case_76_blob_keys</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">41</td>
+          <td class="tname">case_26_mysql8_invisible</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">42</td>
+          <td class="tname">case_04_mb3_suffix</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">43</td>
+          <td class="tname">case_12_unsigned</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">44</td>
+          <td class="tname">case_151_pm_tasks</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">45</td>
+          <td class="tname">case_100_max_complexity</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">46</td>
+          <td class="tname">case_120_table_lock_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">47</td>
+          <td class="tname">case_28_mysql8_func_index</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">48</td>
+          <td class="tname">case_24_edge_cases</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">49</td>
+          <td class="tname">case_102_csv_engine</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">50</td>
+          <td class="tname">case_01_integers</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span><span class="cell-indicator warn" title="没有主键，将使用传统的OFFSET分页">WRN</span></td>
+        </tr>
+        <tr>
+          <td class="idx">51</td>
+          <td class="tname">case_73_generated_stored_mixed</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">52</td>
+          <td class="tname">case_50_hash_partition</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">53</td>
+          <td class="tname">case_65_year_types</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">54</td>
+          <td class="tname">case_156_orders_child</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">55</td>
+          <td class="tname">case_123_ecom_orders</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">56</td>
+          <td class="tname">case_11_autoincrement</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">57</td>
+          <td class="tname">case_32_complex_generated</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">58</td>
+          <td class="tname">case_10_defaults</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">59</td>
+          <td class="tname">case_58_subpartition</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">60</td>
+          <td class="tname">case_137_sys_menus</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">61</td>
+          <td class="tname">case_46_myisam</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">62</td>
+          <td class="tname">case_110_window_function_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">63</td>
+          <td class="tname">case_53_deferred_constraint</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">64</td>
+          <td class="tname">case_130_social_follows</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">65</td>
+          <td class="tname">case_79_serial_default</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">66</td>
+          <td class="tname">case_31_sys_utf8</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">67</td>
+          <td class="tname">case_06_collates</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">68</td>
+          <td class="tname">song_yanpan</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">69</td>
+          <td class="tname">case_74_invisible_cols_mixed</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">70</td>
+          <td class="tname">case_42_fulltext</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">71</td>
+          <td class="tname">case_118_persist_variable_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">72</td>
+          <td class="tname">case_147_geo_regions</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">73</td>
+          <td class="tname">case_160_numeric_boundary</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">74</td>
+          <td class="tname">case_05_charsets</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">75</td>
+          <td class="tname">case_62_various_defaults</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">76</td>
+          <td class="tname">case_154_hotel_rooms</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">77</td>
+          <td class="tname">case_67_trigger_simulation</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">78</td>
+          <td class="tname">case_75_desc_primary_key</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">79</td>
+          <td class="tname">case_18_quotes</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">80</td>
+          <td class="tname">case_29_mysql8_defaults</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">81</td>
+          <td class="tname">case_155_rest_orders</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">82</td>
+          <td class="tname">case_07_complex_charsets</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">83</td>
+          <td class="tname">case_111_json_table_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">84</td>
+          <td class="tname">case_54_tablespace</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">85</td>
+          <td class="tname">case_125_ecom_cart</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">86</td>
+          <td class="tname">case_59_complex_generated</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">87</td>
+          <td class="tname">case_115_resource_group_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">88</td>
+          <td class="tname">case_88_year_conversion</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">89</td>
+          <td class="tname">case_148_user_coupons</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">90</td>
+          <td class="tname">case_34_table_options</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">91</td>
+          <td class="tname">case_43_spatial_index</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">92</td>
+          <td class="tname">case_136_sys_roles</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">93</td>
+          <td class="tname">case_95_union_view_table</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">94</td>
+          <td class="tname">case_103_blackhole_engine</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">95</td>
+          <td class="tname">CASE_39_UNDERSCORE</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">96</td>
+          <td class="tname">case_131_social_likes</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">97</td>
+          <td class="tname">case_55_compressed</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">98</td>
+          <td class="tname">case_21_virtual</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">99</td>
+          <td class="tname">case_156_orders_parent</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">100</td>
+          <td class="tname">case_104_delay_key_write</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">101</td>
+          <td class="tname">case_114_role_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">102</td>
+          <td class="tname">case_57_column_privileges</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">103</td>
+          <td class="tname">case_47_memory</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">104</td>
+          <td class="tname">case_69_deeply_nested_json</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">105</td>
+          <td class="tname">case_84_reserved_words_quoted</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">106</td>
+          <td class="tname">case_97_partition_range_columns</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">107</td>
+          <td class="tname">case_146_stats_monthly</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">108</td>
+          <td class="tname">case_119_force_index_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">109</td>
+          <td class="tname">case_80_on_update_current_timestamp</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">110</td>
+          <td class="tname">case_61_many_columns</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">111</td>
+          <td class="tname">case_30_mysql8_collations</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">112</td>
+          <td class="tname">case_155_rest_categories</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">113</td>
+          <td class="tname">case_72_check_constraint_regex</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">114</td>
+          <td class="tname">case_71_functional_index_complex</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">115</td>
+          <td class="tname">case_92_fulltext_ngram</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">116</td>
+          <td class="tname">case_51_copy_like</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">117</td>
+          <td class="tname">case_152_edu_chapters</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">118</td>
+          <td class="tname">case_09_datetime</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">119</td>
+          <td class="tname">case_60_statistics</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">120</td>
+          <td class="tname">case_158_temporal_mix</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">121</td>
+          <td class="tname">case_153_med_patients</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">122</td>
+          <td class="tname">case_78_multi_col_unique_null</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">123</td>
+          <td class="tname">case_15_options</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">124</td>
+          <td class="tname">case_14_binary</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">125</td>
+          <td class="tname">case_99_partition_linear_hash</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">126</td>
+          <td class="tname">case_142_files_uploads</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">127</td>
+          <td class="tname">case_98_partition_key</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">128</td>
+          <td class="tname">case_89_national_char</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">129</td>
+          <td class="tname">case_44_composite_pk</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">130</td>
+          <td class="tname">case_133_log_operations</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">131</td>
+          <td class="tname">case_87_float_double_unsigned</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">132</td>
+          <td class="tname">case_145_tenant_info</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">133</td>
+          <td class="tname">case_121_ecom_users</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">134</td>
+          <td class="tname">sftpgo_shared_sessions</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">135</td>
+          <td class="tname">case_91_json_array_index</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">136</td>
+          <td class="tname">CASE_40_DEFAULT</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">137</td>
+          <td class="tname">CASE_37_HUMP</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">138</td>
+          <td class="tname">case_19_comments</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">139</td>
+          <td class="tname">case_112_regex_function_test</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">140</td>
+          <td class="tname">case_152_edu_courses</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">141</td>
+          <td class="tname">case_153_med_doctors</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">142</td>
+          <td class="tname">case_48_index_types</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">143</td>
+          <td class="tname">case_90_spatial_reference</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">144</td>
+          <td class="tname">case_20_constraints</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">145</td>
+          <td class="tname">case_148_coupon_templates</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">146</td>
+          <td class="tname">case_96_partition_list_columns</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">147</td>
+          <td class="tname">CASE_38_SNAKE</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">148</td>
+          <td class="tname">case_143_job_tasks</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">149</td>
+          <td class="tname">case_134_log_logins</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">150</td>
+          <td class="tname">case_13_enum_set</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">151</td>
+          <td class="tname">case_101_archive_engine</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">152</td>
+          <td class="tname">case_155_rest_order_items</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">153</td>
+          <td class="tname">case_124_ecom_order_items</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">154</td>
+          <td class="tname">case_149_points_logs</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">155</td>
+          <td class="tname">case_138_sys_user_roles</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">156</td>
+          <td class="tname">case_153_med_registrations</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">157</td>
+          <td class="tname">case_139_sys_role_menus</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">158</td>
+          <td class="tname">case_141_sys_dict</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">159</td>
+          <td class="tname">case_147_user_addresses</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">160</td>
+          <td class="tname">case_49_list_partition</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">161</td>
+          <td class="tname">song_yanpan_many</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">162</td>
+          <td class="tname">case_149_points_accounts</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">163</td>
+          <td class="tname">case_126_cms_articles</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">164</td>
+          <td class="tname">case_94_innodb_row_formats</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">165</td>
+          <td class="tname">case_154_hotel_orders</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">166</td>
+          <td class="tname">case_135_sys_departments</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">167</td>
+          <td class="tname">case_16_partition</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">168</td>
+          <td class="tname">case_144_api_interfaces</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">169</td>
+          <td class="tname">case_08_json</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">170</td>
+          <td class="tname">case_150_data_versions</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">171</td>
+          <td class="tname">case_140_sys_config</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">172</td>
+          <td class="tname">case_143_job_logs</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">173</td>
+          <td class="tname">case_122_ecom_products</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">174</td>
+          <td class="tname">case_151_pm_projects</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">175</td>
+          <td class="tname">case_154_hotel_room_types</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">176</td>
+          <td class="tname">case_145_tenant_config</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">177</td>
+          <td class="tname">case_127_cms_comments</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        <tr>
+          <td class="idx">178</td>
+          <td class="tname">case_129_finance_transactions</td>
+          <td class="num trows">-</td>
+          <td><span class="badge ok">成功</span></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <!-- ERRORS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>❌ Errors</h2>
+      <span class="tag">1</span>
+    </div>
+    <div class="section-body">
+      <ul class="error-list">
+          <li><span class="error-num">#1</span> 执行函数 func_001_complex_analysis DDL失败: 执行DDL失败: ERROR: mismatched parentheses at or near &quot;;&quot; (SQLSTATE 42601), PostgreSQL SQL:</li>
+      </ul>
+    </div>
+  </div>
+  <!-- WARNINGS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>⚡ Warnings</h2>
+      <span class="tag">6</span>
+    </div>
+    <div class="section-body">
+      <ul class="warn-list">
+          <li><span class="warn-num">#1</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+          <li><span class="warn-num">#2</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+          <li><span class="warn-num">#3</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+          <li><span class="warn-num">#4</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+          <li><span class="warn-num">#5</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+          <li><span class="warn-num">#6</span> 表 case_01_integers: 没有主键，将使用传统的OFFSET分页</li>
+      </ul>
+    </div>
+  </div>
+  <!-- FOOTER -->
+  <div class="footer">
+    Generated by <span>mysql2pg report</span> · 2026-04-08 09:26:12
+  </div>
+</div>
+</body>
+</html>
