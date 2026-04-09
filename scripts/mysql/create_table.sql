@@ -12,7 +12,7 @@
 -- 创建整数类型表
 DROP TABLE IF EXISTS case_01_integers;
 CREATE TABLE case_01_integers (
-  col_tiny tinyint,               -- -> SMALLINT
+  col_tiny tinyint primary key,               -- -> SMALLINT
   col_small smallint,             -- -> SMALLINT
   col_medium mediumint,           -- -> INTEGER
   col_int int,                    -- -> INTEGER
@@ -25,7 +25,7 @@ CREATE TABLE case_01_integers (
 -- 创建布尔类型表
 DROP TABLE IF EXISTS case_02_boolean;
 CREATE TABLE case_02_boolean (
-  is_active tinyint(1),           -- -> BOOLEAN
+  is_active tinyint(1) primary key,           -- -> BOOLEAN
   status tinyint(4),              -- -> SMALLINT (not 1, so not boolean)
   is_deleted TINYINT(1)           -- -> BOOLEAN (case insensitive)
 ) ENGINE=InnoDB;
@@ -682,8 +682,8 @@ CREATE TABLE case_65_year_types (
 ) ENGINE=InnoDB COMMENT='Year type variations';
 
 -- 创建更多空间类型表
-DROP TABLE IF EXISTS case_66_geometry_subtypes;
 /**
+DROP TABLE IF EXISTS case_66_geometry_subtypes;
 CREATE TABLE case_66_geometry_subtypes (
   id int PRIMARY KEY,
   geo geometry NOT NULL COMMENT 'Geometry not null',

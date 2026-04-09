@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [ -z "$BASH_VERSION" ]; then
+    exec bash "$0" "$@"
+fi
+
 # Exit on error for build and setup, but not for individual tests
 set -e
 
@@ -12,6 +16,14 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/config.yml"
 BACKUP_FILE="$PROJECT_ROOT/config.yml.bak"
 BINARY="$PROJECT_ROOT/mysql2pg"
+CONVERSION_LOG="$PROJECT_ROOT/conversion.log"
+ERROR_LOG="$PROJECT_ROOT/errors.log"
+
+: > "$CONVERSION_LOG"
+: > "$ERROR_LOG"
+
+exec >> "$CONVERSION_LOG"
+exec 2>> "$ERROR_LOG"
 
 # Colors
 GREEN='\033[0;32m'
@@ -34,7 +46,7 @@ log_passed() {
 }
 
 log_abnormal() {
-    echo -e "${YELLOW}[ABNORMAL] $1${NC}"
+    echo -e "${YELLOW}[ABNORMAL] $1${NC}" >&2
 }
 
 # 打印调试信息
@@ -350,5 +362,182 @@ run_test 31 "Idempotency (Skip Existing)" "conversion.options.skip_existing_tabl
 # This simulates a scenario where schema is already migrated, and we only want to sync data
 # We assume tables exist from previous tests (or created by DDL here implicitly if not skipped, but let's force DDL off to test data only logic if feasible, but our tool usually requires DDL to map. Actually, the tool checks existing tables. Let's enable DDL but with skip_existing=true which is effectively data only for existing tables)
 run_test 32 "Data Sync Only (Truncate)" "conversion.options.skip_existing_tables=true;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.truncate_before_sync=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 33. Max DDL Per Batch (Limit Test)
+run_test 33 "Max DDL Per Batch (5)" "conversion.limits.max_ddl_per_batch=5;conversion.options.tableddl=true;conversion.options.skip_existing_tables=false"
+
+# 34. Max Functions Per Batch (Limit Test)
+run_test 34 "Max Functions Per Batch (2)" "conversion.limits.max_functions_per_batch=2;conversion.options.functions=true"
+
+# 35. Max Indexes Per Batch (Limit Test)
+run_test 35 "Max Indexes Per Batch (10)" "conversion.limits.max_indexes_per_batch=10;conversion.options.indexes=true"
+
+# 36. Max Users Per Batch (Limit Test)
+run_test 36 "Max Users Per Batch (5)" "conversion.limits.max_users_per_batch=5;conversion.options.users=true"
+
+# 37. Max Rows Per Batch (Limit Test)
+run_test 37 "Max Rows Per Batch (100)" "conversion.limits.max_rows_per_batch=100;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 38. Bandwidth Limit (Throttling Test)
+run_test 38 "Bandwidth Limit (50 Mbps)" "conversion.limits.bandwidth_mbps=50;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 39. Custom Error Log Path
+run_test 39 "Custom Error Log Path" "run.error_log_path=/tmp/mysql2pg_errors.log;conversion.options.tableddl=true"
+
+# 40. Custom Log File Path
+run_test 40 "Custom Log File Path" "run.log_file_path=/tmp/mysql2pg_custom.log;conversion.options.tableddl=true;run.enable_file_logging=true"
+
+# 41. MySQL Max Open Connections (Low Limit)
+run_test 41 "MySQL Max Open Conns (10)" "mysql.max_open_conns=10;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 42. MySQL Max Idle Connections
+run_test 42 "MySQL Max Idle Conns (5)" "mysql.max_idle_conns=5;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 43. MySQL Connection Max Lifetime (Short)
+run_test 43 "MySQL Conn Max Lifetime (60s)" "mysql.conn_max_lifetime=60;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 44. PostgreSQL Max Connections (Low Limit)
+run_test 44 "PostgreSQL Max Conns (10)" "postgresql.max_conns=10;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 45. Data Sync with Truncate + Validate (Combined)
+run_test 45 "Data Sync + Truncate + Validate" "conversion.options.data=true;conversion.options.truncate_before_sync=true;conversion.options.validate_data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 46. Full Pipeline with Skip (Resume Scenario)
+run_test 46 "Full Pipeline with Skip (Resume)" "conversion.options.tableddl=true;conversion.options.data=true;conversion.options.view=true;conversion.options.indexes=true;conversion.options.functions=true;conversion.options.users=true;conversion.options.table_privileges=true;conversion.options.skip_existing_tables=true;conversion.options.validate_data=true"
+
+# 47. Data Only (No DDL, Existing Tables)
+run_test 47 "Data Only (No DDL)" "conversion.options.tableddl=false;conversion.options.data=true;conversion.options.skip_existing_tables=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 48. All Conversion Options Disabled (Minimal Run)
+run_test 48 "All Options Disabled" "conversion.options.tableddl=false;conversion.options.data=false;conversion.options.view=false;conversion.options.indexes=false;conversion.options.functions=false;conversion.options.users=false;conversion.options.table_privileges=false"
+
+# 49. Single Table Full Sync (Use Table List)
+run_test 49 "Single Table Full Sync" "conversion.options.use_table_list=true;conversion.options.table_list=[case_01_integers];conversion.options.tableddl=true;conversion.options.data=true;conversion.options.indexes=true;conversion.options.validate_data=true"
+
+# ==============================================================================
+# CLI 子命令测试
+# ==============================================================================
+
+# 51. Report Subcommand - Basic HTML Report Generation
+run_test 51 "Report Subcommand (Basic)" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# 52. Help Flag
+run_test 52 "Help Flag (-h)" "conversion.options.tableddl=true"
+
+# ==============================================================================
+# 数据同步核心功能测试
+# ==============================================================================
+
+# 53. Primary Key Pagination (Cursor-based pagination for tables with PK)
+run_test 53 "Primary Key Pagination" "conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 54. OFFSET Pagination (Tables without primary key)
+run_test 54 "OFFSET Pagination (No PK Tables)" "conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 55. Composite Primary Key Degradation to OFFSET
+run_test 55 "Composite PK Degradation" "conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 56. CopyFrom Protocol Batch Import (PG COPY protocol)
+run_test 56 "CopyFrom Protocol Import" "conversion.options.data=true;conversion.limits.batch_insert_size=1000;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 57. Geometry Point Conversion (WKB → (x,y))
+run_test 57 "Geometry Point Conversion" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# 58. Zero Date Value Handling (0000-00-00 → NULL)
+run_test 58 "Zero Date Value Handling" "conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 59. Empty Table Sync (Zero data rows, full workflow)
+run_test 59 "Empty Table Sync" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# ==============================================================================
+# DDL 转换测试
+# ==============================================================================
+
+# 60. TINYINT(1) → BOOLEAN Conversion
+run_test 60 "TINYINT(1) to BOOLEAN" "conversion.options.tableddl=true"
+
+# 61. AUTO_INCREMENT → SERIAL/BIGSERIAL Conversion
+run_test 61 "AUTO_INCREMENT to SERIAL" "conversion.options.tableddl=true"
+
+# 62. Partition Table RANGE Conversion
+run_test 62 "Partition Table RANGE" "conversion.options.tableddl=true"
+
+# 63. GENERATED Column Conversion (json_extract → ->/->>)
+run_test 63 "GENERATED Column Conversion" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# 64. Reserved Keyword Column Quoting
+run_test 64 "Reserved Keyword Column Quoting" "conversion.options.tableddl=true"
+
+# 65. Table Comment → COMMENT ON TABLE
+run_test 65 "Table Comment Conversion" "conversion.options.tableddl=true"
+
+# 66. Column Comment → COMMENT ON COLUMN
+run_test 66 "Column Comment Conversion" "conversion.options.tableddl=true"
+
+# 67. CASCADE Drop and Rebuild (Table exists, skip=false)
+run_test 67 "CASCADE Drop Rebuild" "conversion.options.tableddl=true;conversion.options.skip_existing_tables=false"
+
+# 68. char(0) → char(10) Cleanup
+run_test 68 "char(0) to char(10) Cleanup" "conversion.options.tableddl=true"
+
+# ==============================================================================
+# 视图/函数转换测试
+# ==============================================================================
+
+# 69. View Function Conversion (IFNULL→COALESCE, etc. 20+ types)
+run_test 69 "View Function Conversion" "conversion.options.view=true"
+
+# 70. Function Cursor Handling (DECLARE CURSOR/FETCH/CLOSE)
+run_test 70 "Function Cursor Handling" "conversion.options.functions=true"
+
+# 71. Function Flow Control (REPEAT→LOOP/UNTIL→EXIT WHEN, etc.)
+run_test 71 "Function Flow Control" "conversion.options.functions=true"
+
+# 72. Function Syntax Fix (Double semicolon/THEN THEN/END IF, etc. 30+ types)
+run_test 72 "Function Syntax Fix" "conversion.options.functions=true"
+
+# ==============================================================================
+# 边界/错误处理测试
+# ==============================================================================
+
+# 73. MySQL Connection Failure (Invalid host/port)
+run_test 73 "MySQL Connection Failure" "mysql.host=invalid.mysql.host;mysql.port=9999;mysql.test_only=true"
+
+# 74. PostgreSQL Connection Failure (Invalid host/port)
+run_test 74 "PostgreSQL Connection Failure" "postgresql.host=invalid.pg.host;postgresql.port=9999;postgresql.test_only=true"
+
+# 75. Permission Insufficient Tolerance (SHOW VIEW privilege denied)
+run_test 75 "Permission Insufficient Tolerance" "conversion.options.view=true"
+
+# 76. Table List Table Not Exist Error Handling
+run_test 76 "Table List Not Exist Error" "conversion.options.use_table_list=true;conversion.options.table_list=[nonexistent_table_12345];conversion.options.tableddl=true"
+
+# 77. Empty Table List Behavior
+run_test 77 "Empty Table List Behavior" "conversion.options.use_table_list=true;conversion.options.table_list=[];conversion.options.tableddl=true;conversion.options.data=true"
+
+# ==============================================================================
+# 配置互斥/组合测试
+# ==============================================================================
+
+# 78. use_table_list Mutuality (Other steps should be skipped)
+run_test 78 "use_table_list Mutuality" "conversion.options.use_table_list=true;conversion.options.table_list=[case_01_integers];conversion.options.tableddl=true;conversion.options.data=true;conversion.options.indexes=false;conversion.options.view=false;conversion.options.functions=false"
+
+# 79. connection_params Custom DSN Passing
+run_test 79 "MySQL connection_params Custom" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# 80. pg_connection_params Custom Passing
+run_test 80 "PostgreSQL pg_connection_params Custom" "conversion.options.tableddl=true;conversion.options.data=true"
+
+# 81. concurrency=1 Serial Execution
+run_test 81 "Serial Execution (concurrency=1)" "conversion.limits.concurrency=1;conversion.options.tableddl=true;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 82. batch_insert_size > max_rows_per_batch Priority
+run_test 82 "Batch Size Conflict Priority" "conversion.limits.batch_insert_size=5000;conversion.limits.max_rows_per_batch=100;conversion.options.data=true;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
+
+# 83. All Options Enabled with Skip + Validate (Full Resume + Check)
+run_test 83 "Full Resume + Validate" "conversion.options.tableddl=true;conversion.options.data=true;conversion.options.view=true;conversion.options.indexes=true;conversion.options.functions=true;conversion.options.users=true;conversion.options.table_privileges=true;conversion.options.skip_existing_tables=true;conversion.options.validate_data=true"
+
+# 84. Data Only with Truncate + Validate + Large Batch
+run_test 84 "Data Truncate Validate Large" "conversion.options.data=true;conversion.options.truncate_before_sync=true;conversion.options.validate_data=true;conversion.limits.batch_insert_size=2000;conversion.options.exclude_use_table_list=true;conversion.options.exclude_table_list=[case_45_stored_generated,case_59_complex_generated]"
 
 log_info "All tests execution completed."
