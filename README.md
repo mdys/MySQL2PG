@@ -1,8 +1,23 @@
 <div align="center">
 
-[!\[License\](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/blob/main/LICENSE) [!\[Stars\](https://img.shields.io/github/stars/xfg0218/MySQL2PG?style=for-the-badge\&label=Stars null)](https://github.com/xfg0218/MySQL2PG/stargazers) [!\[Last Commit\](https://img.shields.io/github/last-commit/xfg0218/MySQL2PG?style=for-the-badge\&label=Last%20Commit null)](https://github.com/xfg0218/MySQL2PG/commits/main) [!\[Language\](https://img.shields.io/github/languages/top/xfg0218/MySQL2PG?style=for-the-badge\&logo=go\&logoColor=white null)](https://github.com/xfg0218/MySQL2PG) [!\[Go Version\](https://img.shields.io/badge/Go-1.24%2B-blue?style=for-the-badge\&logo=go null)](https://go.dev/dl/) [!\[Tests\](https://img.shields.io/badge/Tests-84%20Cases-brightgreen?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/tree/main/scripts/integrationtests) [!\[Test Data\](https://img.shields.io/badge/Test%20Data-167%20Tables-orange?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/tree/main/scripts/mysql)
+[![License][license-badge]][license-url] [![Stars][stars-badge]][stars-url] [![Last Commit][last-commit-badge]][commits-url] [![Language][go-badge]][repo-url] [![Go Version][go-version-badge]][go-url]
 
 </div>
+
+[license-badge]: https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge
+[license-url]: https://github.com/xfg0218/MySQL2PG/blob/main/LICENSE
+
+[stars-badge]: https://img.shields.io/github/stars/xfg0218/MySQL2PG?style=for-the-badge&label=Stars
+[stars-url]: https://github.com/xfg0218/MySQL2PG/stargazers
+
+[last-commit-badge]: https://img.shields.io/github/last-commit/xfg0218/MySQL2PG?style=for-the-badge&label=Last%20Commit
+[commits-url]: https://github.com/xfg0218/MySQL2PG/commits/main
+
+[go-badge]: https://img.shields.io/github/languages/top/xfg0218/MySQL2PG?style=for-the-badge&logo=go&logoColor=white
+[repo-url]: https://github.com/xfg0218/MySQL2PG
+
+[go-version-badge]: https://img.shields.io/badge/Go-1.24%2B-blue?style=for-the-badge&logo=go
+[go-url]: https://go.dev/dl/
 
 Language:  [English](README.md) | [中文](README_CN.md)
 
