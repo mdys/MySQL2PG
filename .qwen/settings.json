@@ -58,7 +58,8 @@
       "Bash(30)",
       "Bash(eof)",
       "Bash(npx *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(bash *)"
     ]
   },
   "$version": 3

@@ -399,6 +399,46 @@ The data sync hot path has been optimized to eliminate the progressive slowdown 
 
 **Result**: Per-batch heap allocation reduced from ~60MB to ~0.4MB (**-99.2%**), eliminating GC Assist and delivering **5-8x throughput improvement**.
 
+## Testing
+
+### Integration Tests
+
+The project includes a comprehensive integration test suite in `scripts/integrationtests/run_integration_tests.sh`:
+
+- **84 test cases** covering all configuration options and core features
+- Tests are organized by category: connectivity, DDL, data sync, views, indexes, functions, users, privileges, limits, run options, and boundary scenarios
+- Each test modifies config.yml, runs the tool, and checks exit code
+- Results are displayed in a formatted table with PASS/FAIL status
+
+```bash
+# Run all integration tests
+bash scripts/integrationtests/run_integration_tests.sh
+```
+
+### Test Data
+
+The `scripts/mysql/insert_data.sql` file provides **10 test rows for all 167 tables** defined in `create_table.sql`, covering:
+- Basic types (integers, floats, strings, dates, JSON, binary)
+- Complex scenarios (e-commerce, CMS, finance, social, medical, hotel, restaurant)
+- Edge cases (partition tables, generated columns, reserved keywords, long identifiers)
+
+```bash
+# Insert test data (after create_table.sql)
+mysql -u root -p test_db < scripts/mysql/insert_data.sql
+```
+
+### Test Coverage Summary
+
+| Category | Tables | Test Cases | Notes |
+|----------|--------|------------|-------|
+| Basic types (case_01~case_40) | 40 | 40 | Integers, floats, strings, dates, JSON, enums, sets |
+| Indexes & constraints (case_41~case_60) | 20 | 20 | Foreign keys, fulltext, spatial, composite PK, partitions |
+| MySQL 5.7+/8.0 (case_61~case_100) | 40 | 40 | CTEs, window functions, JSON_TABLE, optimizer hints |
+| Business scenarios (case_101~case_120) | 20 | 20 | Archive, CSV, Blackhole, UPSERT, multi-table DELETE |
+| Daily development (case_121~case_155) | 35 | 35 | E-commerce, CMS, finance, social, logs, sys admin |
+| Enhanced scenarios (case_156~case_167) | 12 | 12 | Composite FK, JSON generated columns, temporal mix |
+| **Total** | **167** | **84 integration tests** | Full coverage |
+
 ## Development Conventions
 
 ### Code Style

@@ -1,6 +1,6 @@
 <div align="center">
 
-[!\[License\](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/blob/main/LICENSE) [!\[Stars\](https://img.shields.io/github/stars/xfg0218/MySQL2PG?style=for-the-badge\&label=Stars null)](https://github.com/xfg0218/MySQL2PG/stargazers) [!\[Last Commit\](https://img.shields.io/github/last-commit/xfg0218/MySQL2PG?style=for-the-badge\&label=Last%20Commit null)](https://github.com/xfg0218/MySQL2PG/commits/main) [!\[Language\](https://img.shields.io/github/languages/top/xfg0218/MySQL2PG?style=for-the-badge\&logo=go\&logoColor=white null)](https://github.com/xfg0218/MySQL2PG) [!\[Go Version\](https://img.shields.io/badge/Go-1.24%2B-blue?style=for-the-badge\&logo=go null)](https://go.dev/dl/)
+[!\[License\](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/blob/main/LICENSE) [!\[Stars\](https://img.shields.io/github/stars/xfg0218/MySQL2PG?style=for-the-badge\&label=Stars null)](https://github.com/xfg0218/MySQL2PG/stargazers) [!\[Last Commit\](https://img.shields.io/github/last-commit/xfg0218/MySQL2PG?style=for-the-badge\&label=Last%20Commit null)](https://github.com/xfg0218/MySQL2PG/commits/main) [!\[Language\](https://img.shields.io/github/languages/top/xfg0218/MySQL2PG?style=for-the-badge\&logo=go\&logoColor=white null)](https://github.com/xfg0218/MySQL2PG) [!\[Go Version\](https://img.shields.io/badge/Go-1.24%2B-blue?style=for-the-badge\&logo=go null)](https://go.dev/dl/) [!\[Tests\](https://img.shields.io/badge/Tests-84%20Cases-brightgreen?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/tree/main/scripts/integrationtests) [!\[Test Data\](https://img.shields.io/badge/Test%20Data-167%20Tables-orange?style=for-the-badge null)](https://github.com/xfg0218/MySQL2PG/tree/main/scripts/mysql)
 
 </div>
 
@@ -101,6 +101,8 @@ Start
 - **Detailed Logging System**: Supports file logging and console logging, recording every step of the conversion process.
 - **Clear Example Output**: Provides example outputs for various scenarios to help users understand how the tool works.
 - **Comprehensive Error Handling**: Provides detailed error information when errors occur, facilitating troubleshooting.
+- **Integration Test Suite**: 84 test cases covering all configuration options and core features (`scripts/integrationtests/run_integration_tests.sh`).
+- **Test Data Generator**: 10 test rows for all 167 tables (`scripts/mysql/insert_data.sql`) covering basic types, business scenarios, and edge cases.
 
 ## Important Function Details
 
@@ -763,6 +765,36 @@ When primary key conflicts occur, an error is reported. Choose to skip or trunca
 
 ```sql
 Error: Failed to insert table users_20251201: Batch insert failed: ERROR: duplicate key value violates unique constraint "users_20251201_pkey" (SQLSTATE 23505)
+```
+
+### 6. How to Run Integration Tests?
+
+The project includes a comprehensive integration test suite:
+
+```bash
+# Run all 84 integration tests
+bash scripts/integrationtests/run_integration_tests.sh
+
+# Tests cover:
+# - Connectivity tests (MySQL, PostgreSQL)
+# - DDL conversion (table structures, types, constraints)
+# - Data synchronization (batch insert, pagination, validation)
+# - View, index, function, user, privilege conversion
+# - Limit configurations (concurrency, batch sizes, bandwidth)
+# - Run options (logging, progress, console output)
+# - Boundary scenarios (connection failures, missing tables)
+```
+
+### 7. How to Insert Test Data?
+
+The project provides test data for all 167 tables:
+
+```bash
+# Create tables first
+mysql -u root -p test_db < scripts/mysql/create_table.sql
+
+# Then insert test data (10 rows per table)
+mysql -u root -p test_db < scripts/mysql/insert_data.sql
 ```
 
 ## Summary
