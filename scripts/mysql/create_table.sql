@@ -2541,10 +2541,8 @@ CREATE TABLE case_166_memory_rowfmt (
 ) ENGINE=MEMORY ROW_FORMAT=FIXED COMMENT='MEMORY 引擎组合选项测试';
 
 -- 创建 UNION / INSERT_METHOD 测试表（MRG_MYISAM）
-DROP TABLE IF EXISTS case_167_merge_union;
-DROP TABLE IF EXISTS case_167_merge_src_1;
-DROP TABLE IF EXISTS case_167_merge_src_2;
-CREATE TABLE case_167_merge_src_1 (
+DROP TABLE IF EXISTS case_167_merge;
+CREATE TABLE case_167_merge (
   id INT NOT NULL,
   tenant_id INT NOT NULL,
   biz_no VARCHAR(64) NOT NULL,
@@ -2552,20 +2550,3 @@ CREATE TABLE case_167_merge_src_1 (
   PRIMARY KEY (id),
   KEY idx_tenant_biz (tenant_id, biz_no)
 ) ENGINE=MyISAM COMMENT='MERGE 源表 1';
-
-CREATE TABLE case_167_merge_src_2 (
-  id INT NOT NULL,
-  tenant_id INT NOT NULL,
-  biz_no VARCHAR(64) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_tenant_biz (tenant_id, biz_no)
-) ENGINE=MyISAM COMMENT='MERGE 源表 2';
-
-CREATE TABLE case_167_merge_union (
-  id INT NOT NULL,
-  tenant_id INT NOT NULL,
-  biz_no VARCHAR(64) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_tenant_biz (tenant_id, biz_no)
-) ENGINE=MRG_MYISAM UNION=(case_167_merge_src_1,case_167_merge_src_2) INSERT_METHOD=LAST COMMENT='MERGE 联合表';
