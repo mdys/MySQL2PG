@@ -114,6 +114,7 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 	seenTables := make(map[string]bool)
 	seenInconsistent := make(map[string]bool)
 	seenStages := make(map[string]bool)
+	seenWarnings := make(map[string]bool)
 
 	scanner := bufio.NewScanner(f)
 	// 增大 buffer 以容纳长行
@@ -330,7 +331,11 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 		if m := reWarning.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
 			warnMsg := strings.TrimSpace(m[2])
-			r.Warnings = append(r.Warnings, fmt.Sprintf("表 %s: %s", tableName, warnMsg))
+			warning := fmt.Sprintf("表 %s: %s", tableName, warnMsg)
+			if !seenWarnings[warning] {
+				seenWarnings[warning] = true
+				r.Warnings = append(r.Warnings, warning)
+			}
 			// 同时关联到表详情
 			if td, ok := findTableDetail(r.TableDetails, tableName); ok {
 				td.Warning = warnMsg

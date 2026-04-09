@@ -1,5 +1,12 @@
 # MySQL2PG - Project Context
 
+## Code Fixing and Submitting
+- When a code bug is discovered, first create an issue, then analyze and fix the problem based on the issue
+- After code fixes, it will be automatically submitted to the GitHub repository
+- Automatically filter temporary files, test files, PLAN files, etc. during submission
+- The code can be submitted to GitHub only, without the need for publishing
+- When manually publishing, use the version number linked on GitHub for publishing
+
 ## Project Overview
 
 **MySQL2PG** is a professional-grade, high-performance database migration tool written in Go, designed to seamlessly migrate MySQL databases to PostgreSQL. It supports comprehensive conversion capabilities including:

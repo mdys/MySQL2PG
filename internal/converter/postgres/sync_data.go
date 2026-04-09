@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yourusername/mysql2pg/internal/config"
 	"github.com/yourusername/mysql2pg/internal/mysql"
@@ -186,12 +187,17 @@ func SyncTableData(mysqlConn *mysql.Connection, postgresConn *postgres.Connectio
 			// 同步数据
 			var processedRows int64
 
-			// 进度条状态跟踪（减少闪烁）
+			// 进度条状态跟踪（减少闪烁 + 计算速度/ETA）
 			type progressState struct {
 				lastBarLength int
 				lastProgress  float64
+				syncStartTime time.Time
+				totalRows     int64
 			}
-			state := &progressState{}
+			state := &progressState{
+				syncStartTime: time.Now(),
+				totalRows:     totalRows,
+			}
 
 			for {
 				var rows *sql.Rows
@@ -271,27 +277,68 @@ func SyncTableData(mysqlConn *mysql.Connection, postgresConn *postgres.Connectio
 						progress = 100
 					}
 
-					// 生成进度条
-					barLength := 20
+					// 计算速度和ETA
+					elapsed := time.Since(state.syncStartTime).Seconds()
+					var speed float64
+					var etaStr string
+					if elapsed > 0 {
+						speed = float64(processedRows) / elapsed
+					}
+					remainingRows := totalRows - processedRows
+					if speed > 0 && remainingRows > 0 {
+						etaSeconds := float64(remainingRows) / speed
+						if etaSeconds < 60 {
+							etaStr = fmt.Sprintf("%.0fs", etaSeconds)
+						} else if etaSeconds < 3600 {
+							etaStr = fmt.Sprintf("%dm%d s", int(etaSeconds)/60, int(etaSeconds)%60)
+						} else {
+							etaStr = fmt.Sprintf("%dh%dm", int(etaSeconds)/3600, (int(etaSeconds)%3600)/60)
+						}
+					}
+
+					// 生成更宽的进度条（40字符）
+					barLength := 40
 					filledLength := int(progress / 100 * float64(barLength))
-					// 确保空格重复次数不会为负数
-					spaceCount := barLength - filledLength - 1
+					spaceCount := barLength - filledLength
 					if spaceCount < 0 {
 						spaceCount = 0
 					}
-					bar := strings.Repeat("-", filledLength) + ">" + strings.Repeat(" ", spaceCount)
+					// 使用Unicode方块字符更美观
+					bar := strings.Repeat("█", filledLength) + strings.Repeat("░", spaceCount)
+
+					// 格式化数字带千位分隔符
+					formatRows := func(n int64) string {
+						s := fmt.Sprintf("%d", n)
+						for i := len(s) - 3; i > 0; i -= 3 {
+							s = s[:i] + "," + s[i:]
+						}
+						return s
+					}
 
 					// 使用互斥锁保护日志输出
 					mutex.Lock()
-					overallProgress := float64(*completedTasks) / float64(totalTasks) * 100
-					currentTask := *completedTasks + 1
 
-					// 只有当进度条长度或进度百分比变化时才更新（减少闪烁）
-					// 当进度条实际长度变化或进度百分比变化超过0.5%时才更新
+					// 只有当进度条长度或进度百分比变化超过0.5%时才更新
 					if state.lastBarLength != filledLength || progress-state.lastProgress >= 0.5 {
 						// 使用ANSI转义序列清除当前行，然后输出新的进度信息
 						// \033[2K 清除整个行，\r 回到行首
-						fmt.Printf("\033[2K\r进度: %.2f%% (%d/%d) : 同步表 %s [%s] %.2f%%", overallProgress, currentTask, totalTasks, table.Name, bar, progress)
+						speedStr := ""
+						if speed > 0 {
+							if speed >= 1000 {
+								speedStr = fmt.Sprintf("%.1fK rows/s", speed/1000)
+							} else {
+								speedStr = fmt.Sprintf("%.0f rows/s", speed)
+							}
+						}
+
+						fmt.Printf("\033[2K\r📊 %.1f%% | %s | %s | %s/%s rows | %s | ETA: %s",
+							progress,
+							table.Name,
+							bar,
+							formatRows(processedRows),
+							formatRows(totalRows),
+							speedStr,
+							etaStr)
 						state.lastBarLength = filledLength
 						state.lastProgress = progress
 					}
