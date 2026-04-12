@@ -102,6 +102,12 @@ var (
 	reFROM_UNIXTIME = regexp.MustCompile(`(?i)from_unixtime\s*\(\s*([^)]*)\s*\)`)
 	// 匹配 DATE_FORMAT 函数
 	reDATE_FORMAT = regexp.MustCompile(`(?i)date_format\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	reYEAR_FUNC   = regexp.MustCompile(`(?i)\byear\s*\(\s*([^)]+)\)`)
+	reMONTH_FUNC  = regexp.MustCompile(`(?i)\bmonth\s*\(\s*([^)]+)\)`)
+	reDAY_FUNC    = regexp.MustCompile(`(?i)\bdayofmonth\s*\(\s*([^)]+)\)`)
+	reHOUR_FUNC   = regexp.MustCompile(`(?i)\bhour\s*\(\s*([^)]+)\)`)
+	reMINUTE_FUNC = regexp.MustCompile(`(?i)\bminute\s*\(\s*([^)]+)\)`)
+	reSECOND_FUNC = regexp.MustCompile(`(?i)\bsecond\s*\(\s*([^)]+)\)`)
 	// 匹配 STR_TO_DATE 函数
 	reSTR_TO_DATE = regexp.MustCompile(`(?i)str_to_date\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 DATEDIFF 函数
@@ -464,7 +470,19 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		// FROM_UNIXTIME(expr) -> to_timestamp(expr)
 		return "to_timestamp(" + args + ")"
 	})
-	processed = reDATE_FORMAT.ReplaceAllString(processed, "to_char($1, $2)")
+	processed = reYEAR_FUNC.ReplaceAllString(processed, "extract(year from $1)::int")
+	processed = reMONTH_FUNC.ReplaceAllString(processed, "extract(month from $1)::int")
+	processed = reDAY_FUNC.ReplaceAllString(processed, "extract(day from $1)::int")
+	processed = reHOUR_FUNC.ReplaceAllString(processed, "extract(hour from $1)::int")
+	processed = reMINUTE_FUNC.ReplaceAllString(processed, "extract(minute from $1)::int")
+	processed = reSECOND_FUNC.ReplaceAllString(processed, "extract(second from $1)::int")
+	processed = reDATE_FORMAT.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reDATE_FORMAT.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return fmt.Sprintf("to_char(%s, %s)", strings.TrimSpace(match[1]), convertMySQLDateFormatToPG(strings.TrimSpace(match[2])))
+	})
 	processed = reSTR_TO_DATE.ReplaceAllString(processed, "to_date($1, $2)")
 	processed = reDATEDIFF.ReplaceAllString(processed, "date_part('day', $1 - $2)")
 	processed = reTIMEDIFF.ReplaceAllString(processed, "($1 - $2)")
@@ -842,6 +860,29 @@ func normalizeCastTypeForPG(t string) string {
 	default:
 		return normalized
 	}
+}
+
+func convertMySQLDateFormatToPG(raw string) string {
+	format := strings.TrimSpace(raw)
+	if len(format) >= 2 && ((format[0] == '\'' && format[len(format)-1] == '\'') || (format[0] == '"' && format[len(format)-1] == '"')) {
+		format = format[1 : len(format)-1]
+	}
+	replacer := strings.NewReplacer(
+		"%Y", "YYYY",
+		"%y", "YY",
+		"%m", "MM",
+		"%c", "FMMM",
+		"%d", "DD",
+		"%e", "FMDD",
+		"%H", "HH24",
+		"%h", "HH12",
+		"%I", "HH12",
+		"%i", "MI",
+		"%s", "SS",
+		"%S", "SS",
+	)
+	format = replacer.Replace(format)
+	return "'" + format + "'"
 }
 
 func buildJSONPathExpr(base string, rawPath string, textResult bool) string {
