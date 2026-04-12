@@ -22,10 +22,9 @@ var (
 	reOrder = regexp.MustCompile(`(?i)\s+order\s+by\s+[^,]*`)
 	// 匹配 SEPARATOR 关键字
 	reSep = regexp.MustCompile(`(?i)\s*separator\s*['"]([^'"]+)['"]`)
-	// 匹配 IF 函数
-	reIf = regexp.MustCompile(`(?i)\bif\s*\(\s*([^,()]+)\s*,\s*([^,()]+)\s*,\s*([^)]+)\)`)
 	// 匹配 CONVERT 函数
 	reConvert = regexp.MustCompile(`(?i)\bconvert\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	reCast    = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+as\s+([^)]+)\)`)
 	// 匹配 LIMIT a,b 语法
 	reLimitOffset = regexp.MustCompile(`(?i)\blimit\s+(\d+)\s*,\s*(\d+)`)
 	// 匹配 JSON_OBJECT 函数
@@ -35,7 +34,8 @@ var (
 	// 匹配 JSON_QUOTE 函数
 	reJSONQuote = regexp.MustCompile(`(?i)json_quote\s*\(`)
 	// 匹配 JSON_UNQUOTE 函数
-	reJSONUnquote = regexp.MustCompile(`(?i)json_unquote\s*\(`)
+	reJSONUnquote        = regexp.MustCompile(`(?i)json_unquote\s*\(\s*([^)]+)\s*\)`)
+	reJSONUnquoteExtract = regexp.MustCompile(`(?i)json_unquote\s*\(\s*json_extract\s*\(\s*([^,]+)\s*,\s*([^)]+)\)\s*\)`)
 	// 匹配 JSON_EXTRACT 函数
 	reJSONExtract = regexp.MustCompile(`(?i)json_extract\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 JSON_KEYS 函数
@@ -208,13 +208,29 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	}
 
 	//  将IF(expr, then, else)转换为CASE WHEN ... THEN ... ELSE ... END（简单版，不处理嵌套逗号）
-	processed = reIf.ReplaceAllString(processed, "CASE WHEN $1 THEN $2 ELSE $3 END")
+	processed = replaceIfExpressions(processed)
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace IF with CASE WHEN in view definition for view '%s'", viewName)
 	}
 
-	// 将CONVERT(x, TYPE)转换为CAST(x AS TYPE)（简单替换）
-	processed = reConvert.ReplaceAllString(processed, "CAST($1 AS $2)")
+	processed = reConvert.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reConvert.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		expr := strings.TrimSpace(match[1])
+		targetType := normalizeCastTypeForPG(strings.TrimSpace(match[2]))
+		return fmt.Sprintf("CAST(%s AS %s)", expr, targetType)
+	})
+	processed = reCast.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reCast.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		expr := strings.TrimSpace(match[1])
+		targetType := normalizeCastTypeForPG(strings.TrimSpace(match[2]))
+		return fmt.Sprintf("CAST(%s AS %s)", expr, targetType)
+	})
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace CONVERT with CAST in view definition for view '%s'", viewName)
 	}
@@ -272,9 +288,28 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = reJSONObject.ReplaceAllString(processed, "json_build_object(")
 	processed = reJSONArray.ReplaceAllString(processed, "json_build_array(")
 	processed = reJSONQuote.ReplaceAllString(processed, "jsonb_quote(")
-	processed = reJSONUnquote.ReplaceAllString(processed, "jsonb_unquote(")
-	// JSON_EXTRACT(json_column, '$.key') -> json_column -> 'key'
-	processed = reJSONExtract.ReplaceAllString(processed, "$1 -> $2")
+	processed = reJSONUnquoteExtract.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reJSONUnquoteExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return buildJSONPathExpr(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), true)
+	})
+	processed = reJSONUnquote.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reJSONUnquote.FindStringSubmatch(m)
+		if len(match) < 2 {
+			return m
+		}
+		arg := strings.TrimSpace(match[1])
+		return fmt.Sprintf("trim(both '\"' from (%s)::text)", arg)
+	})
+	processed = reJSONExtract.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reJSONExtract.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return buildJSONPathExpr(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), false)
+	})
 	processed = reJSONKeys.ReplaceAllString(processed, "json_object_keys(")
 	processed = reJSONLength.ReplaceAllString(processed, "json_array_length(")
 	processed = reJSONType.ReplaceAllString(processed, "jsonb_typeof(")
@@ -282,8 +317,13 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		// 匹配JSON_VALID(expr) -> (expr IS NOT NULL AND jsonb_typeof(expr::jsonb) IS NOT NULL)
 		return "(" + m[10:len(m)-1] + " IS NOT NULL AND jsonb_typeof(" + m[10:len(m)-1] + "::jsonb) IS NOT NULL)"
 	})
-	// JSON_VALUE(json_column, '$.key') -> json_column ->> 'key'
-	processed = reJSONValue.ReplaceAllString(processed, "$1 ->> $2")
+	processed = reJSONValue.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reJSONValue.FindStringSubmatch(m)
+		if len(match) < 3 {
+			return m
+		}
+		return buildJSONPathExpr(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), true)
+	})
 	processed = reJSONInsert.ReplaceAllString(processed, "jsonb_insert(")
 	processed = reJSONSet.ReplaceAllString(processed, "jsonb_set(")
 	processed = reJSONReplace.ReplaceAllString(processed, "jsonb_set(")
@@ -700,6 +740,146 @@ func splitTopLevelCommas(s string) []string {
 		parts = append(parts, strings.TrimSpace(buf.String()))
 	}
 	return parts
+}
+
+func replaceIfExpressions(s string) string {
+	out := s
+	idx := 0
+	for {
+		pos, openParen := findNextIfCall(out, idx)
+		if pos == -1 {
+			break
+		}
+		endParen, ok := findMatchingParenInViewExpr(out, openParen)
+		if !ok {
+			idx = openParen + 1
+			continue
+		}
+		args := splitTopLevelCommas(out[openParen+1 : endParen])
+		if len(args) != 3 {
+			idx = endParen + 1
+			continue
+		}
+		replacement := fmt.Sprintf("CASE WHEN %s THEN %s ELSE %s END",
+			strings.TrimSpace(args[0]),
+			strings.TrimSpace(args[1]),
+			strings.TrimSpace(args[2]),
+		)
+		out = out[:pos] + replacement + out[endParen+1:]
+		idx = pos + len(replacement)
+	}
+	return out
+}
+
+func findNextIfCall(s string, start int) (int, int) {
+	for i := start; i < len(s)-1; i++ {
+		if !((s[i] == 'i' || s[i] == 'I') && (s[i+1] == 'f' || s[i+1] == 'F')) {
+			continue
+		}
+		if i > 0 && isIdentChar(s[i-1]) {
+			continue
+		}
+		j := i + 2
+		if j < len(s) && isIdentChar(s[j]) {
+			continue
+		}
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
+			j++
+		}
+		if j < len(s) && s[j] == '(' {
+			return i, j
+		}
+	}
+	return -1, -1
+}
+
+func findMatchingParenInViewExpr(s string, openIdx int) (int, bool) {
+	depth := 1
+	inSingle := false
+	inDouble := false
+	for i := openIdx + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '(':
+			if !inSingle && !inDouble {
+				depth++
+			}
+		case ')':
+			if !inSingle && !inDouble {
+				depth--
+				if depth == 0 {
+					return i, true
+				}
+			}
+		}
+	}
+	return -1, false
+}
+
+func isIdentChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+func normalizeCastTypeForPG(t string) string {
+	normalized := strings.TrimSpace(t)
+	upper := strings.ToUpper(normalized)
+	switch {
+	case upper == "SIGNED", upper == "UNSIGNED":
+		return "BIGINT"
+	case upper == "DATETIME":
+		return "TIMESTAMP"
+	case upper == "CHAR":
+		return "TEXT"
+	case strings.HasPrefix(upper, "DECIMAL"):
+		return "NUMERIC" + normalized[len("DECIMAL"):]
+	default:
+		return normalized
+	}
+}
+
+func buildJSONPathExpr(base string, rawPath string, textResult bool) string {
+	path := strings.TrimSpace(rawPath)
+	if len(path) >= 2 && ((path[0] == '\'' && path[len(path)-1] == '\'') || (path[0] == '"' && path[len(path)-1] == '"')) {
+		path = path[1 : len(path)-1]
+	}
+	if !strings.HasPrefix(path, "$.") {
+		if textResult {
+			return fmt.Sprintf("%s ->> '%s'", base, strings.Trim(path, `"'`))
+		}
+		return fmt.Sprintf("%s -> '%s'", base, strings.Trim(path, `"'`))
+	}
+	segments := strings.Split(path[2:], ".")
+	cleanSegments := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		seg = strings.Trim(seg, `"'`)
+		if seg != "" {
+			cleanSegments = append(cleanSegments, seg)
+		}
+	}
+	if len(cleanSegments) == 0 {
+		if textResult {
+			return fmt.Sprintf("%s::text", base)
+		}
+		return base
+	}
+	if len(cleanSegments) == 1 {
+		if textResult {
+			return fmt.Sprintf("%s ->> '%s'", base, cleanSegments[0])
+		}
+		return fmt.Sprintf("%s -> '%s'", base, cleanSegments[0])
+	}
+	if textResult {
+		return fmt.Sprintf("%s #>> '{%s}'", base, strings.Join(cleanSegments, ","))
+	}
+	return fmt.Sprintf("%s #> '{%s}'", base, strings.Join(cleanSegments, ","))
 }
 
 // replaceToDaysExpressions 将 to_days(expr) 转成 floor(extract(epoch from (expr)::timestamp) / 86400)
