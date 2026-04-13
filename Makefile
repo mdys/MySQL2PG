@@ -9,10 +9,13 @@ CONFIG_FILE=config.yml
 ERROR_FILE=errors.log
 CONVERSION_FILE=conversion.log
 
+# 版本号：优先使用 git tag，否则使用 dev
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+
 # 构建项目
 build:
-	@echo "正在构建项目..."
-	@go build -o $(BINARY_NAME) $(SRC_DIR)/
+	@echo "正在构建项目 (版本: $(VERSION))..."
+	@go build -ldflags "-X main.Version=$(VERSION)" -o $(BINARY_NAME) $(SRC_DIR)/
 	@echo "构建完成！可执行文件: $(BINARY_NAME)"
 
 # 运行项目

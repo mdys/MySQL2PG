@@ -13,6 +13,9 @@ import (
 	pgconn "github.com/yourusername/mysql2pg/internal/postgres"
 )
 
+// Version 是工具版本号，构建时通过 ldflags 注入
+var Version = "dev"
+
 func main() {
 
 	// 监听本地 6060 端口，用于性能分析
@@ -31,6 +34,9 @@ func main() {
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "-h" || os.Args[i] == "--help" {
 			showHelp()
+			return
+		} else if os.Args[i] == "-v" || os.Args[i] == "--version" {
+			showVersion()
 			return
 		} else if os.Args[i] == "-c" && i+1 < len(os.Args) {
 			configPath = os.Args[i+1]
@@ -170,6 +176,7 @@ func showHelp() {
 	fmt.Println("  mysql2pg [配置文件路径]")
 	fmt.Println("  mysql2pg -c [配置文件路径]")
 	fmt.Println("  mysql2pg report -l <conversion.log>  从日志生成HTML报告")
+	fmt.Println("  mysql2pg -v|--version 显示版本信息")
 	fmt.Println("  mysql2pg -h|--help 显示帮助信息")
 	fmt.Println()
 	fmt.Println("配置文件说明:")
@@ -242,4 +249,9 @@ func showHelp() {
 	fmt.Println("  5. 零数据处理: 支持零数据行表的完整同步流程，包括进度显示和验证")
 	fmt.Println("  6. 完整的资源清理: 所有数据库连接和资源都会被正确释放，避免资源泄漏")
 	fmt.Println("  7. 完善的性能分析: 监听本地 6060 端口，用于性能分析")
+}
+
+// showVersion 显示版本信息
+func showVersion() {
+	fmt.Printf("mysql2pg version %s\n", Version)
 }

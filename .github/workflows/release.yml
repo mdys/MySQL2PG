@@ -54,11 +54,13 @@ jobs:
         run: |
           OUTPUT="dist/${{ matrix.goos }}_${{ matrix.goarch }}/mysql2pg${{ matrix.suffix }}"
           echo "Building to $OUTPUT"
+          # Extract version from tag name (e.g., v2.8.0)
+          VERSION="${{ github.event.inputs.tag || github.event.release.tag_name || github.ref_name }}"
           # Adjust the build target below if your main is not in ./cmd
           if [ -f ./cmd/main.go ]; then
-            go build -o "$OUTPUT" -v ./cmd
+            go build -ldflags "-X main.Version=$VERSION" -o "$OUTPUT" -v ./cmd
           else
-            go build -o "$OUTPUT" -v .
+            go build -ldflags "-X main.Version=$VERSION" -o "$OUTPUT" -v .
           fi
 
       - name: Verify binary exists
