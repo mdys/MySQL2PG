@@ -263,47 +263,6 @@ func (m *Manager) Run() error {
 	// 显示数据不一致表的统计信息
 	m.displayInconsistentTables()
 
-	// 显示完成信息
-	if m.config.Run.ShowConsoleLogs {
-		// 直接从 conversionStats 汇总
-		var totalTables, totalRows, totalViews, totalIndexes int
-		for _, stat := range m.conversionStats {
-			name := stat.StageName
-			switch {
-			case strings.Contains(name, "表结构") || strings.Contains(name, "DDL"):
-				totalTables = stat.ObjectCount
-			case strings.Contains(name, "表数据") || strings.Contains(name, "数据同步"):
-				totalRows = stat.ObjectCount
-			case strings.Contains(name, "视图"):
-				totalViews = stat.ObjectCount
-			case strings.Contains(name, "索引"):
-				totalIndexes = stat.ObjectCount
-			}
-		}
-
-		// 计算总耗时和平均速度
-		var totalDuration float64
-		for _, stat := range m.conversionStats {
-			totalDuration += stat.EndTime.Sub(stat.StartTime).Seconds()
-		}
-		speedStr := ""
-		if totalDuration > 0 && totalRows > 0 {
-			speed := float64(totalRows) / totalDuration
-			if speed >= 1000 {
-				speedStr = fmt.Sprintf("%.1fK rows/s", speed/1000)
-			} else {
-				speedStr = fmt.Sprintf("%.0f rows/s", speed)
-			}
-		}
-
-		fmt.Println("\n┌─────────────────────────────────────────────────────────────────┐")
-		fmt.Println("│  ✅ Conversion Complete                                        │")
-		fmt.Printf("│  📊 %d tables | %d rows | %d views | %d indexes               │\n", totalTables, totalRows, totalViews, totalIndexes)
-		fmt.Printf("│  ⚡ Total: %.2fs | Avg: %s                              │\n", totalDuration, speedStr)
-		fmt.Println("│  📋 Report: ./mysql2pg report -l conversion.log               │")
-		fmt.Println("└─────────────────────────────────────────────────────────────────┘")
-	}
-
 	m.Log("转换完成!")
 	return nil
 }
