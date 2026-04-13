@@ -42,6 +42,7 @@
 7. **HTML Migration Reports**: `./mysql2pg report -l conversion.log` generates visual single-file HTML reports
 8. **Performance Profiling**: Built-in pprof on `localhost:6060`
 9. **Table Filtering**: Whitelist (`table_list`) and blacklist (`exclude_table_list`) modes
+10. **View/Function Exclusion**: Skip specified views (`exclude_view_list`) and functions (`exclude_function_list`) using set-based lookup
 
 ## Architecture
 
@@ -217,6 +218,14 @@ conversion:
     exclude_table_list: [table1]   # Tables to skip
     validate_data: true         # Validate row counts after sync
     truncate_before_sync: false # Clear target tables before sync
+    
+    # View exclusion (supports both list and map syntax)
+    exclude_use_view_list: false        # Skip specified views
+    exclude_view_list: [view1, view2]   # Views to skip
+    
+    # Function exclusion (supports both list and map syntax)
+    exclude_use_function_list: false    # Skip specified functions
+    exclude_function_list: [func1]      # Functions to skip
 
   limits:
     concurrency: 10             # Concurrent goroutines
@@ -258,6 +267,7 @@ Step 2: Convert table DDL (tableddl: true)
   └─ Create tables in PostgreSQL (skip if exists)
 
 Step 3: Convert views (view: true)
+  ├─ Skip views in exclude_view_list (if exclude_use_view_list=true)
   └─ Convert MySQL view definitions to PostgreSQL compatible syntax
 
 Step 4: Sync data (data: true)
@@ -273,6 +283,7 @@ Step 5: Convert indexes (indexes: true)
   └─ Rebuild: primary keys, unique indexes, normal indexes, full-text indexes
 
 Step 6: Convert functions (functions: true)
+  ├─ Skip functions in exclude_function_list (if exclude_use_function_list=true)
   └─ 50+ function mappings (NOW()→CURRENT_TIMESTAMP, IFNULL()→COALESCE(), etc.)
 
 Step 7: Convert users (users: true)
@@ -493,6 +504,7 @@ report.InconsistentTable  // Table name, MySQL count, PG count
 config.Config         // MySQL, PostgreSQL, Conversion, Run sections
 config.OptionsConfig  // All conversion toggle options
 config.LimitsConfig   // All batch/concurrency limits
+config.StringSet      // String set type for exclusion lists (views, functions)
 ```
 
 ### Git Ignored Files

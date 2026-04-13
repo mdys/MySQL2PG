@@ -1,13 +1,70 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+// StringSet 字符串集合类型，支持 YAML 列表和 map 两种语法
+type StringSet map[string]struct{}
+
+// UnmarshalYAML 自定义 YAML 反序列化
+// 支持列表形式：["item1", "item2"]
+// 也支持 map 形式：{item1: {}, item2: {}}
+func (s *StringSet) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// 先尝试解析为列表
+	var list []string
+	if err := unmarshal(&list); err == nil {
+		*s = make(StringSet, len(list))
+		for _, v := range list {
+			(*s)[strings.ToLower(v)] = struct{}{}
+		}
+		return nil
+	}
+
+	// 再尝试解析为 map
+	var m map[string]interface{}
+	if err := unmarshal(&m); err != nil {
+		return err
+	}
+
+	*s = make(StringSet, len(m))
+	for k := range m {
+		(*s)[strings.ToLower(k)] = struct{}{}
+	}
+	return nil
+}
+
+// UnmarshalJSON 自定义 JSON 反序列化（Viper 内部使用）
+func (s *StringSet) UnmarshalJSON(data []byte) error {
+	// 先尝试解析为列表
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*s = make(StringSet, len(list))
+		for _, v := range list {
+			(*s)[strings.ToLower(v)] = struct{}{}
+		}
+		return nil
+	}
+
+	// 再尝试解析为 map
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+
+	*s = make(StringSet, len(m))
+	for k := range m {
+		(*s)[strings.ToLower(k)] = struct{}{}
+	}
+	return nil
+}
 
 // Config 存储所有配置
 type Config struct {
@@ -66,6 +123,14 @@ type OptionsConfig struct {
 	ValidateData       bool     `mapstructure:"validate_data"`          // 同步后验证数据一致性
 	LowercaseColumns   bool     `mapstructure:"lowercase_columns"`      // 表字段是否转小写，true代表转小写，默认，false代表与mysql一致
 	TruncateBeforeSync bool     `mapstructure:"truncate_before_sync"`   // 同步前是否清空表数据
+
+	// 视图排除列表
+	SkipUseViewList bool      `mapstructure:"exclude_use_view_list"` // 是否使用视图排除列表
+	SkipViewSet     StringSet `mapstructure:"exclude_view_list"`     // 要跳过的视图列表
+
+	// 函数排除列表
+	SkipUseFunctionList bool      `mapstructure:"exclude_use_function_list"` // 是否使用函数排除列表
+	SkipFunctionSet     StringSet `mapstructure:"exclude_function_list"`     // 要跳过的函数列表
 }
 
 // LimitsConfig 限制配置

@@ -1199,6 +1199,18 @@ func (m *Manager) convertViews(views []mysql.ViewInfo, semaphore chan struct{}) 
 	currentViewIndex := 0
 
 	for _, view := range views {
+		// 检查是否在排除列表中
+		if m.config.Conversion.Options.SkipUseViewList {
+			if shouldSkipView(view.ViewName, m.config.Conversion.Options.SkipViewSet) {
+				m.Log("跳过视图 %s（在排除列表中）", view.ViewName)
+				m.mutex.Lock()
+				m.completedTasks++
+				m.mutex.Unlock()
+				m.updateProgress()
+				continue
+			}
+		}
+
 		semaphore <- struct{}{}
 		currentViewIndex++
 
@@ -1472,6 +1484,18 @@ func (m *Manager) addColumnComments(table mysql.TableInfo, columnNameMap map[str
 // convertFunctions 转换函数
 func (m *Manager) convertFunctions(functions []mysql.FunctionInfo, semaphore chan struct{}) error {
 	for _, function := range functions {
+		// 检查是否在排除列表中
+		if m.config.Conversion.Options.SkipUseFunctionList {
+			if shouldSkipFunction(function.Name, m.config.Conversion.Options.SkipFunctionSet) {
+				m.Log("跳过函数 %s（在排除列表中）", function.Name)
+				m.mutex.Lock()
+				m.completedTasks++
+				m.mutex.Unlock()
+				<-semaphore
+				continue
+			}
+		}
+
 		semaphore <- struct{}{}
 
 		pgDDL, err := ConvertFunctionDDL(function)
@@ -1883,4 +1907,24 @@ func (m *Manager) displayInconsistentTables() {
 
 		m.Log("共发现 %d 个表数据校验不一致", len(m.inconsistentTables))
 	}
+}
+
+// shouldSkipView 检查视图是否应该被跳过
+// 使用集合进行 O(1) 查找，视图名大小写不敏感
+func shouldSkipView(viewName string, excludeSet config.StringSet) bool {
+	if excludeSet == nil {
+		return false
+	}
+	_, exists := excludeSet[strings.ToLower(viewName)]
+	return exists
+}
+
+// shouldSkipFunction 检查函数是否应该被跳过
+// 使用集合进行 O(1) 查找，函数名大小写不敏感
+func shouldSkipFunction(funcName string, excludeSet config.StringSet) bool {
+	if excludeSet == nil {
+		return false
+	}
+	_, exists := excludeSet[strings.ToLower(funcName)]
+	return exists
 }
