@@ -1491,8 +1491,8 @@ func (m *Manager) convertFunctions(functions []mysql.FunctionInfo, semaphore cha
 				m.mutex.Lock()
 				m.completedTasks++
 				m.mutex.Unlock()
-				<-semaphore
-				continue
+				m.updateProgress()
+				continue  // ← 移除错误的 <-semaphore
 			}
 		}
 
