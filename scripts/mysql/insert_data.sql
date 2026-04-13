@@ -1964,8 +1964,8 @@ INSERT INTO case_167_merge (id, tenant_id, biz_no) VALUES
 -- para_normalize (10列: PRIMARY KEY ... USING BTREE 典型案例)
 -- 用于测试 MySQL 8.0 默认主键带 USING BTREE 子句的迁移场景
 -- ============================================================================
-TRUNCATE TABLE para_normalize;
-INSERT INTO para_normalize (front_name, queen_name, usestatus, type, retain, create_by, create_time, update_by, update_time) VALUES
+TRUNCATE TABLE case_168_merge;
+INSERT INTO case_168_merge (front_name, queen_name, usestatus, type, retain, create_by, create_time, update_by, update_time) VALUES
 ('周杰伦', 'Jay Chou', 0, 1, 2, 1, '2024-01-01 10:00:00', 1, '2024-01-01 10:00:00'),
 ('林俊杰', 'JJ Lin', 0, 1, 2, 1, '2024-01-02 10:00:00', 1, '2024-01-02 10:00:00'),
 ('Eason Chan', '陈奕迅', 0, 1, 2, 1, '2024-01-03 10:00:00', 1, '2024-01-03 10:00:00'),
