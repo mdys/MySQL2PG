@@ -4,105 +4,90 @@ import (
 	"testing"
 )
 
-func TestStringSet_UnmarshalYAML_List(t *testing.T) {
-	// 测试列表形式解析
-	var s StringSet
-	listData := []byte(`["View1", "VIEW2", "view3"]`)
-
-	// 手动调用 UnmarshalJSON 测试（模拟 Viper 行为）
-	err := s.UnmarshalJSON(listData)
-	if err != nil {
-		t.Fatalf("UnmarshalJSON failed for list: %v", err)
+func TestConvertExclusionLists_ViewList(t *testing.T) {
+	// 测试视图排除列表转换
+	config := &ConversionConfig{
+		Options: OptionsConfig{
+			SkipViewList: []string{"View1", "VIEW2", "view3"},
+		},
 	}
 
-	// 验证集合包含所有元素（转换为小写）
+	config.convertExclusionLists()
+
+	// 验证集合已正确转换
 	expected := []string{"view1", "view2", "view3"}
 	for _, key := range expected {
-		if _, exists := s[key]; !exists {
-			t.Errorf("StringSet missing key %q, got: %v", key, s)
+		if _, exists := config.Options.SkipViewSet[key]; !exists {
+			t.Errorf("SkipViewSet missing key %q, got: %v", key, config.Options.SkipViewSet)
 		}
 	}
 
 	// 验证大小
-	if len(s) != 3 {
-		t.Errorf("Expected 3 elements, got %d", len(s))
+	if len(config.Options.SkipViewSet) != 3 {
+		t.Errorf("Expected 3 elements, got %d", len(config.Options.SkipViewSet))
 	}
 }
 
-func TestStringSet_UnmarshalYAML_Map(t *testing.T) {
-	// 测试 map 形式解析
-	var s StringSet
-	mapData := []byte(`{"View1": {}, "VIEW2": {}, "view3": {}}`)
-
-	err := s.UnmarshalJSON(mapData)
-	if err != nil {
-		t.Fatalf("UnmarshalJSON failed for map: %v", err)
+func TestConvertExclusionLists_FunctionList(t *testing.T) {
+	// 测试函数排除列表转换
+	config := &ConversionConfig{
+		Options: OptionsConfig{
+			SkipFunctionList: []string{"Func1", "FUNC2", "func3"},
+		},
 	}
 
-	// 验证集合包含所有元素（转换为小写）
-	expected := []string{"view1", "view2", "view3"}
+	config.convertExclusionLists()
+
+	// 验证集合已正确转换
+	expected := []string{"func1", "func2", "func3"}
 	for _, key := range expected {
-		if _, exists := s[key]; !exists {
-			t.Errorf("StringSet missing key %q, got: %v", key, s)
+		if _, exists := config.Options.SkipFunctionSet[key]; !exists {
+			t.Errorf("SkipFunctionSet missing key %q, got: %v", key, config.Options.SkipFunctionSet)
 		}
 	}
 
 	// 验证大小
-	if len(s) != 3 {
-		t.Errorf("Expected 3 elements, got %d", len(s))
+	if len(config.Options.SkipFunctionSet) != 3 {
+		t.Errorf("Expected 3 elements, got %d", len(config.Options.SkipFunctionSet))
 	}
 }
 
-func TestStringSet_CaseInsensitive(t *testing.T) {
-	// 测试大小写不敏感
-	var s StringSet
-	data := []byte(`["MixedCase", "UPPERCASE", "lowercase"]`)
-
-	err := s.UnmarshalJSON(data)
-	if err != nil {
-		t.Fatalf("UnmarshalJSON failed: %v", err)
+func TestConvertExclusionLists_Empty(t *testing.T) {
+	// 测试空列表转换
+	config := &ConversionConfig{
+		Options: OptionsConfig{
+			SkipViewList:     []string{},
+			SkipFunctionList: nil,
+		},
 	}
 
-	// 验证所有键都转换为小写
-	expected := []string{"mixedcase", "uppercase", "lowercase"}
-	for _, key := range expected {
-		if _, exists := s[key]; !exists {
-			t.Errorf("StringSet missing lowercase key %q, got: %v", key, s)
-		}
+	config.convertExclusionLists()
+
+	// 验证集合仍为 nil
+	if config.Options.SkipViewSet != nil {
+		t.Errorf("Expected nil SkipViewSet, got %v", config.Options.SkipViewSet)
 	}
-}
-
-func TestStringSet_Empty(t *testing.T) {
-	// 测试空列表
-	var s StringSet
-	data := []byte(`[]`)
-
-	err := s.UnmarshalJSON(data)
-	if err != nil {
-		t.Fatalf("UnmarshalJSON failed for empty list: %v", err)
-	}
-
-	if len(s) != 0 {
-		t.Errorf("Expected 0 elements, got %d", len(s))
+	if config.Options.SkipFunctionSet != nil {
+		t.Errorf("Expected nil SkipFunctionSet, got %v", config.Options.SkipFunctionSet)
 	}
 }
 
-func TestStringSet_Duplicates(t *testing.T) {
+func TestConvertExclusionLists_Duplicates(t *testing.T) {
 	// 测试重复元素（应该自动去重）
-	var s StringSet
-	data := []byte(`["view1", "VIEW1", "View1"]`)
-
-	err := s.UnmarshalJSON(data)
-	if err != nil {
-		t.Fatalf("UnmarshalJSON failed: %v", err)
+	config := &ConversionConfig{
+		Options: OptionsConfig{
+			SkipViewList: []string{"view1", "VIEW1", "View1"},
+		},
 	}
+
+	config.convertExclusionLists()
 
 	// 验证只有 1 个元素（去重）
-	if len(s) != 1 {
-		t.Errorf("Expected 1 element (deduplicated), got %d", len(s))
+	if len(config.Options.SkipViewSet) != 1 {
+		t.Errorf("Expected 1 element (deduplicated), got %d", len(config.Options.SkipViewSet))
 	}
 
-	if _, exists := s["view1"]; !exists {
-		t.Errorf("StringSet missing key 'view1'")
+	if _, exists := config.Options.SkipViewSet["view1"]; !exists {
+		t.Errorf("SkipViewSet missing key 'view1'")
 	}
 }

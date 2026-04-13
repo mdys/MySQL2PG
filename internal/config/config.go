@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,60 +10,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-// StringSet 字符串集合类型，支持 YAML 列表和 map 两种语法
+// StringSet 字符串集合类型（内部使用）
 type StringSet map[string]struct{}
-
-// UnmarshalYAML 自定义 YAML 反序列化
-// 支持列表形式：["item1", "item2"]
-// 也支持 map 形式：{item1: {}, item2: {}}
-func (s *StringSet) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	// 先尝试解析为列表
-	var list []string
-	if err := unmarshal(&list); err == nil {
-		*s = make(StringSet, len(list))
-		for _, v := range list {
-			(*s)[strings.ToLower(v)] = struct{}{}
-		}
-		return nil
-	}
-
-	// 再尝试解析为 map
-	var m map[string]interface{}
-	if err := unmarshal(&m); err != nil {
-		return err
-	}
-
-	*s = make(StringSet, len(m))
-	for k := range m {
-		(*s)[strings.ToLower(k)] = struct{}{}
-	}
-	return nil
-}
-
-// UnmarshalJSON 自定义 JSON 反序列化（Viper 内部使用）
-func (s *StringSet) UnmarshalJSON(data []byte) error {
-	// 先尝试解析为列表
-	var list []string
-	if err := json.Unmarshal(data, &list); err == nil {
-		*s = make(StringSet, len(list))
-		for _, v := range list {
-			(*s)[strings.ToLower(v)] = struct{}{}
-		}
-		return nil
-	}
-
-	// 再尝试解析为 map
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-
-	*s = make(StringSet, len(m))
-	for k := range m {
-		(*s)[strings.ToLower(k)] = struct{}{}
-	}
-	return nil
-}
 
 // Config 存储所有配置
 type Config struct {
@@ -125,12 +72,14 @@ type OptionsConfig struct {
 	TruncateBeforeSync bool     `mapstructure:"truncate_before_sync"`   // 同步前是否清空表数据
 
 	// 视图排除列表
-	SkipUseViewList bool      `mapstructure:"exclude_use_view_list"` // 是否使用视图排除列表
-	SkipViewSet     StringSet `mapstructure:"exclude_view_list"`     // 要跳过的视图列表
+	SkipUseViewList bool       `mapstructure:"exclude_use_view_list"` // 是否使用视图排除列表
+	SkipViewList    []string   `mapstructure:"exclude_view_list"`     // 要跳过的视图列表（原始配置）
+	SkipViewSet     StringSet  `mapstructure:"-"`                     // 要跳过的视图集合（转换后，内部使用）
 
 	// 函数排除列表
 	SkipUseFunctionList bool      `mapstructure:"exclude_use_function_list"` // 是否使用函数排除列表
-	SkipFunctionSet     StringSet `mapstructure:"exclude_function_list"`     // 要跳过的函数列表
+	SkipFunctionList    []string  `mapstructure:"exclude_function_list"`     // 要跳过的函数列表（原始配置）
+	SkipFunctionSet     StringSet `mapstructure:"-"`                         // 要跳过的函数集合（转换后，内部使用）
 }
 
 // LimitsConfig 限制配置
@@ -196,7 +145,29 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
+	// 将排除列表转换为集合（O(1) 查找）
+	config.Conversion.convertExclusionLists()
+
 	return &config, nil
+}
+
+// convertExclusionLists 将排除列表转换为集合（内部使用）
+func (c *ConversionConfig) convertExclusionLists() {
+	// 转换视图排除列表
+	if len(c.Options.SkipViewList) > 0 {
+		c.Options.SkipViewSet = make(StringSet, len(c.Options.SkipViewList))
+		for _, v := range c.Options.SkipViewList {
+			c.Options.SkipViewSet[strings.ToLower(v)] = struct{}{}
+		}
+	}
+
+	// 转换函数排除列表
+	if len(c.Options.SkipFunctionList) > 0 {
+		c.Options.SkipFunctionSet = make(StringSet, len(c.Options.SkipFunctionList))
+		for _, f := range c.Options.SkipFunctionList {
+			c.Options.SkipFunctionSet[strings.ToLower(f)] = struct{}{}
+		}
+	}
 }
 
 // ValidateConfig 验证配置是否有效
