@@ -441,17 +441,13 @@ conversion:
     validate_data: true
     truncate_before_sync: true
     
-    # View exclusion (supports both list and map syntax)
+    # View exclusion
     exclude_use_view_list: false
-    exclude_view_list:
-      - view1
-      - view2
+    exclude_view_list: [view1, view2]
     
-    # Function exclusion (supports both list and map syntax)
+    # Function exclusion
     exclude_use_function_list: false
-    exclude_function_list:
-      - func1
-      - func2
+    exclude_function_list: [func1, func2]
 
   limits:
     concurrency: 10

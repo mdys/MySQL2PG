@@ -464,23 +464,13 @@ conversion:
     validate_data: true         # 同步数据后验证数据一致性
     truncate_before_sync: true  # 同步前是否清空表数据
     
-    # 视图排除列表（支持列表或 map 两种语法）
+    # 视图排除列表
     exclude_use_view_list: false        # 是否使用视图排除列表
-    exclude_view_list:                  # 要跳过的视图列表，当exclude_use_view_list为true时生效
-      - view1
-      - view2
-      # 或使用 map 形式:
-      # view1: {}
-      # view2: {}
+    exclude_view_list: [view1, view2]   # 要跳过的视图列表，当exclude_use_view_list为true时生效
     
-    # 函数排除列表（支持列表或 map 两种语法）
+    # 函数排除列表
     exclude_use_function_list: false    # 是否使用函数排除列表
-    exclude_function_list:              # 要跳过的函数列表，当exclude_use_function_list为true时生效
-      - func1
-      - func2
-      # 或使用 map 形式:
-      # func1: {}
-      # func2: {}
+    exclude_function_list: [func1, func2]  # 要跳过的函数列表，当exclude_use_function_list为true时生效
 
   # 限制配置
   limits:

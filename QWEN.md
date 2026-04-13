@@ -219,11 +219,11 @@ conversion:
     validate_data: true         # Validate row counts after sync
     truncate_before_sync: false # Clear target tables before sync
     
-    # View exclusion (supports both list and map syntax)
+    # View exclusion
     exclude_use_view_list: false        # Skip specified views
     exclude_view_list: [view1, view2]   # Views to skip
     
-    # Function exclusion (supports both list and map syntax)
+    # Function exclusion
     exclude_use_function_list: false    # Skip specified functions
     exclude_function_list: [func1]      # Functions to skip
 
