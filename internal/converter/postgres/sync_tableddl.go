@@ -1003,17 +1003,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 			}
 		}
 
-		if skipIndexLine ||
-			strings.Contains(upperTrimmedLine, "FOREIGN KEY") ||
-			strings.Contains(upperTrimmedLine, "USING BTREE") ||
-			strings.Contains(upperTrimmedLine, "USING HASH") ||
-			(strings.Contains(trimmedLine, "engine=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
-			(strings.Contains(trimmedLine, "ENGINE=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
-			(strings.Contains(trimmedLine, "row_format=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
-			(strings.Contains(trimmedLine, "ROW_FORMAT=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) {
-			continue
-		}
-
+		// 先处理 PRIMARY KEY（即使包含 USING BTREE/HASH 也要提取主键列名）
 		if strings.HasPrefix(strings.ToUpper(trimmedLine), "PRIMARY KEY") {
 			pkColumn := extractPrimaryKeyColumn(trimmedLine)
 			if pkColumn == "" {
@@ -1024,6 +1014,17 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 			} else {
 				primaryKeyColumn = pkColumn
 			}
+			continue
+		}
+
+		if skipIndexLine ||
+			strings.Contains(upperTrimmedLine, "FOREIGN KEY") ||
+			strings.Contains(upperTrimmedLine, "USING BTREE") ||
+			strings.Contains(upperTrimmedLine, "USING HASH") ||
+			(strings.Contains(trimmedLine, "engine=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
+			(strings.Contains(trimmedLine, "ENGINE=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
+			(strings.Contains(trimmedLine, "row_format=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) ||
+			(strings.Contains(trimmedLine, "ROW_FORMAT=") && !strings.Contains(trimmedLine, "`") && !strings.Contains(trimmedLine, " ")) {
 			continue
 		}
 
