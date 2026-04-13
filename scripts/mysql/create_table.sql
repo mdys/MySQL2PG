@@ -2550,3 +2550,21 @@ CREATE TABLE case_167_merge (
   PRIMARY KEY (id),
   KEY idx_tenant_biz (tenant_id, biz_no)
 ) ENGINE=MyISAM COMMENT='MERGE 源表 1';
+
+-- 创建 PRIMARY KEY ... USING BTREE 测试表（修复主键丢失问题）
+-- 典型案例：MySQL 8.0 默认在主键后添加 USING BTREE，迁移时需确保主键不丢失
+DROP TABLE IF EXISTS case_168_merge;
+CREATE TABLE `case_168_merge` (
+  `normalize_id` int NOT NULL AUTO_INCREMENT,
+  `front_name` varchar(255) DEFAULT NULL,
+  `queen_name` varchar(255) DEFAULT NULL,
+  `usestatus` int DEFAULT '0',
+  `type` int DEFAULT NULL,
+  `retain` int DEFAULT NULL,
+  `create_by` int DEFAULT NULL,
+  `create_time` datetime DEFAULT NULL,
+  `update_by` int DEFAULT NULL,
+  `update_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`normalize_id`) USING BTREE
+) ENGINE=InnoDB AUTO_INCREMENT=12506 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
