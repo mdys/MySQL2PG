@@ -205,8 +205,32 @@ Start
   - `conversion.options.exclude_function_list: [func1, func2]` - List of functions to skip.
 - **Notes**:
   - View and function names are case-insensitive (automatically converted to lowercase for matching).
-  - Configuration supports both YAML list and map syntax.
+  - Configuration uses simple inline array syntax: `[item1, item2]`.
   - Skipped objects are logged and counted in progress statistics.
+  - Useful for skipping complex/temporary views or functions that don't need migration.
+
+**Example Configuration**:
+
+```yaml
+conversion:
+  options:
+    view: true
+    functions: true
+    
+    # Skip specific views (e.g., complex reporting views)
+    exclude_use_view_list: true
+    exclude_view_list: [v_complex_report, v_temp_stats, v_old_dashboard]
+    
+    # Skip specific functions (e.g., deprecated or MySQL-only functions)
+    exclude_use_function_list: true
+    exclude_function_list: [func_calc_commission, func_get_user_level, func_deprecated]
+```
+
+**Use Cases**:
+1. **Complex Views**: Skip views with complex JOINs or MySQL-specific functions that don't translate well to PostgreSQL.
+2. **Temporary Views**: Skip temporary or development-only views that aren't needed in production.
+3. **Deprecated Functions**: Skip old functions that are no longer used or have PostgreSQL-native alternatives.
+4. **MySQL-Specific Functions**: Skip functions that rely on MySQL-specific behavior not supported in PostgreSQL.
 
 ### Connection Pool Optimization
 
