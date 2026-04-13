@@ -42,6 +42,7 @@
 7. **HTML Migration Reports**: `./mysql2pg report -l conversion.log` generates visual single-file HTML reports
 8. **Performance Profiling**: Built-in pprof on `localhost:6060`
 9. **Table Filtering**: Whitelist (`table_list`) and blacklist (`exclude_table_list`) modes
+10. **View/Function Exclusion**: Skip specified views (`exclude_view_list`) and functions (`exclude_function_list`) using set-based lookup (O(1) lookup performance)
 
 ## Architecture
 
@@ -218,6 +219,20 @@ conversion:
     validate_data: true         # Validate row counts after sync
     truncate_before_sync: false # Clear target tables before sync
 
+    # View exclusion (skip specified views during migration)
+    exclude_use_view_list: false        # Enable view exclusion mode
+    exclude_view_list: [v_complex_report, v_temp_stats]   # Views to skip (case-insensitive)
+
+    # Function exclusion (skip specified functions during migration)
+    exclude_use_function_list: false    # Enable function exclusion mode
+    exclude_function_list: [func_deprecated, func_mysql_only]  # Functions to skip (case-insensitive)
+
+**View/Function Exclusion Use Cases**:
+- Skip complex/temporary views that don't need migration
+- Skip deprecated or MySQL-specific functions
+- Skip objects that have PostgreSQL-native alternatives
+- All names are case-insensitive and logged when skipped
+
   limits:
     concurrency: 10             # Concurrent goroutines
     bandwidth_mbps: 100         # Network bandwidth limit (Mbps) — currently unused
@@ -258,7 +273,10 @@ Step 2: Convert table DDL (tableddl: true)
   └─ Create tables in PostgreSQL (skip if exists)
 
 Step 3: Convert views (view: true)
-  └─ Convert MySQL view definitions to PostgreSQL compatible syntax
+  ├─ Filter views (exclude_view_list if exclude_use_view_list=true)
+  │   └─ Skip views in exclusion list, log and update progress
+  ├─ Convert MySQL view definitions to PostgreSQL compatible syntax
+  └─ Execute CREATE VIEW statements in PostgreSQL
 
 Step 4: Sync data (data: true)
   ├─ Truncate target tables (if truncate_before_sync=true)
@@ -273,7 +291,10 @@ Step 5: Convert indexes (indexes: true)
   └─ Rebuild: primary keys, unique indexes, normal indexes, full-text indexes
 
 Step 6: Convert functions (functions: true)
-  └─ 50+ function mappings (NOW()→CURRENT_TIMESTAMP, IFNULL()→COALESCE(), etc.)
+  ├─ Filter functions (exclude_function_list if exclude_use_function_list=true)
+  │   └─ Skip functions in exclusion list, log and update progress
+  ├─ 50+ function mappings (NOW()→CURRENT_TIMESTAMP, IFNULL()→COALESCE(), etc.)
+  └─ Execute CREATE FUNCTION statements in PostgreSQL
 
 Step 7: Convert users (users: true)
   └─ MySQL Users → PostgreSQL Roles (preserve password hashes)
@@ -493,6 +514,13 @@ report.InconsistentTable  // Table name, MySQL count, PG count
 config.Config         // MySQL, PostgreSQL, Conversion, Run sections
 config.OptionsConfig  // All conversion toggle options
 config.LimitsConfig   // All batch/concurrency limits
+config.StringSet      // String set type for exclusion lists (views, functions) - O(1) lookup
+
+// Exclusion list fields in OptionsConfig:
+//   SkipViewList       []string   // Raw view names from YAML config
+//   SkipViewSet        StringSet  // Converted set (internal use, case-insensitive)
+//   SkipFunctionList   []string   // Raw function names from YAML config
+//   SkipFunctionSet    StringSet  // Converted set (internal use, case-insensitive)
 ```
 
 ### Git Ignored Files

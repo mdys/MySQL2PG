@@ -44,6 +44,7 @@ Start
  │     └─ Create tables in PostgreSQL (skip_existing_tables controls skipping)
  │
  ├─▶ [Step 3] Convert views (views: true)
+ │     ├─ If exclude_use_view_list=true → Filter out views in exclude_view_list
  │     └─ Convert MySQL view definitions to PostgreSQL compatible syntax
  │
  ├─▶ [Step 4] Sync data (data: true)
@@ -58,6 +59,7 @@ Start
  │     └─ Batch processing (max_indexes_per_batch=20)
  │
  ├─▶ [Step 6] Convert functions (functions: true)
+ │     ├─ If exclude_use_function_list=true → Filter out functions in exclude_function_list
  │     └─ Support 50+ function mappings (e.g., NOW() → CURRENT_TIMESTAMP, IFNULL() → COALESCE())
  │
  ├─▶ [Step 7] Convert users (users: true)
@@ -191,6 +193,44 @@ Start
   - Whitelist and blacklist modes cannot be used simultaneously.
   - If both are set, whitelist mode takes precedence.
   - Table names are case-sensitive; ensure they match the actual database table names.
+
+### View and Function Exclusion
+
+- **Description**: Provides exclusion lists for views and functions to flexibly control which views and functions to sync.
+- **View Exclusion** (`exclude_use_view_list`):
+  - `conversion.options.exclude_use_view_list: true` - Enable view exclusion mode, skip views in `exclude_view_list`.
+  - `conversion.options.exclude_view_list: [view1, view2]` - List of views to skip.
+- **Function Exclusion** (`exclude_use_function_list`):
+  - `conversion.options.exclude_use_function_list: true` - Enable function exclusion mode, skip functions in `exclude_function_list`.
+  - `conversion.options.exclude_function_list: [func1, func2]` - List of functions to skip.
+- **Notes**:
+  - View and function names are case-insensitive (automatically converted to lowercase for matching).
+  - Configuration uses simple inline array syntax: `[item1, item2]`.
+  - Skipped objects are logged and counted in progress statistics.
+  - Useful for skipping complex/temporary views or functions that don't need migration.
+
+**Example Configuration**:
+
+```yaml
+conversion:
+  options:
+    view: true
+    functions: true
+    
+    # Skip specific views (e.g., complex reporting views)
+    exclude_use_view_list: true
+    exclude_view_list: [v_complex_report, v_temp_stats, v_old_dashboard]
+    
+    # Skip specific functions (e.g., deprecated or MySQL-only functions)
+    exclude_use_function_list: true
+    exclude_function_list: [func_calc_commission, func_get_user_level, func_deprecated]
+```
+
+**Use Cases**:
+1. **Complex Views**: Skip views with complex JOINs or MySQL-specific functions that don't translate well to PostgreSQL.
+2. **Temporary Views**: Skip temporary or development-only views that aren't needed in production.
+3. **Deprecated Functions**: Skip old functions that are no longer used or have PostgreSQL-native alternatives.
+4. **MySQL-Specific Functions**: Skip functions that rely on MySQL-specific behavior not supported in PostgreSQL.
 
 ### Connection Pool Optimization
 
@@ -424,6 +464,14 @@ conversion:
     exclude_table_list: [table1]
     validate_data: true
     truncate_before_sync: true
+    
+    # View exclusion
+    exclude_use_view_list: false
+    exclude_view_list: [view1, view2]
+    
+    # Function exclusion
+    exclude_use_function_list: false
+    exclude_function_list: [func1, func2]
 
   limits:
     concurrency: 10

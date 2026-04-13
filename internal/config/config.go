@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+// StringSet 字符串集合类型（内部使用）
+type StringSet map[string]struct{}
 
 // Config 存储所有配置
 type Config struct {
@@ -66,6 +70,16 @@ type OptionsConfig struct {
 	ValidateData       bool     `mapstructure:"validate_data"`          // 同步后验证数据一致性
 	LowercaseColumns   bool     `mapstructure:"lowercase_columns"`      // 表字段是否转小写，true代表转小写，默认，false代表与mysql一致
 	TruncateBeforeSync bool     `mapstructure:"truncate_before_sync"`   // 同步前是否清空表数据
+
+	// 视图排除列表
+	SkipUseViewList bool       `mapstructure:"exclude_use_view_list"` // 是否使用视图排除列表
+	SkipViewList    []string   `mapstructure:"exclude_view_list"`     // 要跳过的视图列表（原始配置）
+	SkipViewSet     StringSet  `mapstructure:"-"`                     // 要跳过的视图集合（转换后，内部使用）
+
+	// 函数排除列表
+	SkipUseFunctionList bool      `mapstructure:"exclude_use_function_list"` // 是否使用函数排除列表
+	SkipFunctionList    []string  `mapstructure:"exclude_function_list"`     // 要跳过的函数列表（原始配置）
+	SkipFunctionSet     StringSet `mapstructure:"-"`                         // 要跳过的函数集合（转换后，内部使用）
 }
 
 // LimitsConfig 限制配置
@@ -131,7 +145,29 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
+	// 将排除列表转换为集合（O(1) 查找）
+	config.Conversion.convertExclusionLists()
+
 	return &config, nil
+}
+
+// convertExclusionLists 将排除列表转换为集合（内部使用）
+func (c *ConversionConfig) convertExclusionLists() {
+	// 转换视图排除列表
+	if len(c.Options.SkipViewList) > 0 {
+		c.Options.SkipViewSet = make(StringSet, len(c.Options.SkipViewList))
+		for _, v := range c.Options.SkipViewList {
+			c.Options.SkipViewSet[strings.ToLower(v)] = struct{}{}
+		}
+	}
+
+	// 转换函数排除列表
+	if len(c.Options.SkipFunctionList) > 0 {
+		c.Options.SkipFunctionSet = make(StringSet, len(c.Options.SkipFunctionList))
+		for _, f := range c.Options.SkipFunctionList {
+			c.Options.SkipFunctionSet[strings.ToLower(f)] = struct{}{}
+		}
+	}
 }
 
 // ValidateConfig 验证配置是否有效
