@@ -45,7 +45,12 @@ conversion:
     exclude_view_list: [view1]         # 要跳过的视图列表，当exclude_use_view_list为true时生效
     exclude_use_function_list: false   # 是否使用函数排除列表
     exclude_function_list: [func1]     # 要跳过的函数列表，当exclude_use_function_list为true时生效
-  
+
+  # MPP 分布式数据库支持
+  mpp:
+    enabled: false              # 是否启用 MPP 模式（启用后才会创建 UNIQUE INDEX）
+    database: auto              # MPP 数据库类型: greenplum/yugabyte/auto（自动检测）
+
   # 限制配置
   limits:
     concurrency: 10             # 并发数限制

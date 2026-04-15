@@ -50,6 +50,13 @@ type PostgreSQLConfig struct {
 type ConversionConfig struct {
 	Options OptionsConfig `mapstructure:"options"`
 	Limits  LimitsConfig  `mapstructure:"limits"`
+	MPP     MPPConfig     `mapstructure:"mpp"`
+}
+
+// MPPConfig MPP 分布式数据库配置
+type MPPConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`  // 是否启用 MPP 模式（启用后才会创建 UNIQUE INDEX）
+	Database string `mapstructure:"database"` // MPP 数据库类型: greenplum/yugabyte/auto
 }
 
 // OptionsConfig 转换选项配置
@@ -226,6 +233,19 @@ func (c *Config) ValidateConfig() error {
 	}
 	if c.Conversion.Limits.MaxRowsPerBatch <= 0 {
 		c.Conversion.Limits.MaxRowsPerBatch = 50000 // 默认值，与 BatchInsertSize 保持一致以减少网络往返
+	}
+
+	// MPP 配置默认值
+	if c.Conversion.MPP.Database == "" {
+		c.Conversion.MPP.Database = "auto"
+	}
+
+	// MPP 数据库类型合法性校验
+	if c.Conversion.MPP.Enabled {
+		db := c.Conversion.MPP.Database
+		if db != "auto" && db != "greenplum" && db != "yugabyte" {
+			return fmt.Errorf("MPP数据库类型无效: %s（支持: greenplum, yugabyte, auto）", db)
+		}
 	}
 
 	return nil
