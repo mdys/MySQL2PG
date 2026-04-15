@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yourusername/mysql2pg/internal/config"
+	"github.com/yourusername/mysql2pg/internal/converter/mpp"
 	"github.com/yourusername/mysql2pg/internal/mysql"
 	"github.com/yourusername/mysql2pg/internal/postgres"
 )
@@ -1536,6 +1537,19 @@ func (m *Manager) convertFunctions(functions []mysql.FunctionInfo, semaphore cha
 // convertIndexes 转换索引
 // 将MySQL索引转换为PostgreSQL索引并执行
 func (m *Manager) convertIndexes(indexes []mysql.IndexInfo, semaphore chan struct{}) error {
+	// 创建 MPP 处理器
+	schemaName := mpp.ParseSearchPath(m.postgresConn.GetPgConnectionParams())
+	mppHandler := &mpp.IndexHandler{
+		Config: &mpp.Config{
+			Enabled:  m.config.Conversion.MPP.Enabled,
+			Database: m.config.Conversion.MPP.Database,
+		},
+		PostgresDB: m.postgresConn.GetPool(),
+		Schema:     schemaName,
+		LogFunc:    m.Log,
+		ErrorFunc:  m.logError,
+	}
+
 	for _, index := range indexes {
 		semaphore <- struct{}{}
 
@@ -1543,6 +1557,32 @@ func (m *Manager) convertIndexes(indexes []mysql.IndexInfo, semaphore chan struc
 		lowercaseIndexName := strings.ToLower(index.Name)
 		// 获取该表的列名映射
 		columnNamesMap := m.tableColumnNamesMap[index.Table]
+
+		// ========== MPP UNIQUE INDEX 处理 ==========
+		if index.IsUnique {
+			shouldCreate, err := mppHandler.HandleUniqueIndex(index, m.config.Conversion.Options.LowercaseColumns)
+			if err != nil {
+				m.logError(fmt.Sprintf("处理 UNIQUE 索引 %s 失败: %v", lowercaseIndexName, err))
+				// 跳过该索引，继续处理其他索引
+				m.mutex.Lock()
+				m.completedTasks++
+				m.mutex.Unlock()
+				<-semaphore
+				m.updateProgress()
+				continue
+			}
+			if !shouldCreate {
+				// 更新进度
+				m.mutex.Lock()
+				m.completedTasks++
+				m.mutex.Unlock()
+				<-semaphore
+				m.updateProgress()
+				continue
+			}
+		}
+		// ========== MPP 处理结束 ==========
+
 		pgDDL, err := ConvertIndexDDL(index.Table, index, m.config.Conversion.Options.LowercaseColumns, columnNamesMap)
 		if err != nil {
 			errMsg := fmt.Sprintf("转换索引 %s 失败: %v", lowercaseIndexName, err)
@@ -1795,7 +1835,10 @@ func (m *Manager) Log(format string, args ...interface{}) {
 }
 
 // logError 记录错误
-func (m *Manager) logError(errMsg string) {
+func (m *Manager) logError(errMsg string, args ...interface{}) {
+	if len(args) > 0 {
+		errMsg = fmt.Sprintf(errMsg, args...)
+	}
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	errorLogEntry := fmt.Sprintf("[%s] ERROR: %s\n", timestamp, errMsg)
 

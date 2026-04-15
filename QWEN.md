@@ -4,8 +4,8 @@
 - When a code bug is discovered, first create an issue, then analyze and fix the problem based on the issue
 - After code fixes, it will be automatically submitted to the GitHub repository
 - Automatically filter temporary files, test files, PLAN files, etc. during submission
+- The code needs to be audited
 - Create a pull request (PR) and submit it to GitHub without publishing a new version
-- 
 - When manually publishing, use the version number linked on GitHub for publishing
 
 ## Project Overview

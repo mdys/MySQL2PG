@@ -24,6 +24,11 @@ type Connection struct {
 	config *config.PostgreSQLConfig
 }
 
+// GetPgConnectionParams 获取 PostgreSQL 连接参数（导出方法）
+func (c *Connection) GetPgConnectionParams() string {
+	return c.config.PgConnectionParams
+}
+
 var charZeroPattern = regexp.MustCompile(`(?i)char\s*\(\s*0\s*\)`)
 
 // 预编译的零日期 []byte 常量，避免在热路径中重复 string() 转换
@@ -505,9 +510,9 @@ func (c *Connection) TableExists(tableName string) (bool, error) {
 	ctx := context.Background()
 	query := `
 		SELECT EXISTS (
-			SELECT 1 
-			FROM information_schema.tables 
-			WHERE table_schema = 'public' 
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = current_schema()
 			AND table_name = $1
 		)
 	`
@@ -542,14 +547,14 @@ func (c *Connection) GetTablePrivileges(tableName string) ([]map[string]string, 
 	ctx := context.Background()
 
 	query := `
-		SELECT 
-			grantee::regrole::text AS "user_or_role", 
-			privilege_type, 
-			is_grantable 
-		FROM 
-			information_schema.role_table_grants 
-		WHERE 
-			table_schema = 'public' 
+		SELECT
+			grantee::regrole::text AS "user_or_role",
+			privilege_type,
+			is_grantable
+		FROM
+			information_schema.role_table_grants
+		WHERE
+			table_schema = current_schema()
 			AND table_name = $1
 	`
 

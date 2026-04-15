@@ -60,7 +60,18 @@
       "Bash(npx *)",
       "Bash(git rm *)",
       "Bash(bash *)",
-      "Bash(gh *)"
+      "Bash(gh *)",
+      "Bash(git stash)",
+      "Read(//Users/xiaoxu/**)",
+      "Bash(npm install *)",
+      "Bash(skills *)",
+      "Bash(/users/xiaoxu/idea/mysql2pg/mysql2pg *)",
+      "Bash(golangci-lint *)",
+      "Bash(true)",
+      "Bash(git diff *)",
+      "WebSearch",
+      "WebFetch(docs.yugabyte.com)",
+      "Bash(git reset *)"
     ]
   },
   "$version": 3
