@@ -11,11 +11,11 @@ import (
 
 // IndexHandler UNIQUE INDEX 处理器
 type IndexHandler struct {
-	Config       *Config
-	PostgresDB   *pgxpool.Pool
-	Schema       string // 当前使用的 schema
-	LogFunc      func(string, ...interface{})
-	ErrorFunc    func(string, ...interface{})
+	Config         *Config
+	PostgresDB     *pgxpool.Pool
+	Schema         string // 当前使用的 schema
+	LogFunc        func(string, ...interface{})
+	ErrorFunc      func(string, ...interface{})
 	detectedDBType string
 	detectedOnce   sync.Once
 }
@@ -64,7 +64,7 @@ func (h *IndexHandler) detectDBType() string {
 			h.LogFunc("使用配置的 MPP 数据库类型: %s", h.detectedDBType)
 			return
 		}
-		
+
 		// 否则自动检测（DetectDatabaseType 内部已包含版本号检测 + 扩展检查）
 		h.detectedDBType = DetectDatabaseType(h.PostgresDB)
 		h.LogFunc("自动检测到 MPP 数据库类型: %s", h.detectedDBType)
