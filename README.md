@@ -199,14 +199,13 @@ Start
 - **Description**: Provides exclusion lists for views and functions to flexibly control which views and functions to sync.
 - **View Exclusion** (`exclude_use_view_list`):
   - `conversion.options.exclude_use_view_list: true` - Enable view exclusion mode, skip views in `exclude_view_list`.
-  - `conversion.options.exclude_view_list` - List of views to skip (object list format).
+  - `conversion.options.exclude_view_list: [view1, view2]` - List of views to skip.
 - **Function Exclusion** (`exclude_use_function_list`):
   - `conversion.options.exclude_use_function_list: true` - Enable function exclusion mode, skip functions in `exclude_function_list`.
-  - `conversion.options.exclude_function_list` - List of functions to skip (object list format).
+  - `conversion.options.exclude_function_list: [func1, func2]` - List of functions to skip.
 - **Notes**:
   - View and function names are case-insensitive (automatically converted to lowercase for matching).
-  - Configure exclusion lists as object items, for example `- name: v_xxx`.
-  - Do not use string arrays (`[item1, item2]`) or boolean values for these two list fields.
+  - Configure exclusion lists using string arrays, for example `[view1, view2]`.
   - Skipped objects are logged and counted in progress statistics.
   - Useful for skipping complex/temporary views or functions that don't need migration.
 
@@ -220,17 +219,11 @@ conversion:
     
     # Skip specific views (e.g., complex reporting views)
     exclude_use_view_list: true
-    exclude_view_list:
-      - name: v_complex_report
-      - name: v_temp_stats
-      - name: v_old_dashboard
+    exclude_view_list: [v_complex_report, v_temp_stats, v_old_dashboard]
     
     # Skip specific functions (e.g., deprecated or MySQL-only functions)
     exclude_use_function_list: true
-    exclude_function_list:
-      - name: func_calc_commission
-      - name: func_get_user_level
-      - name: func_deprecated
+    exclude_function_list: [func_calc_commission, func_get_user_level, func_deprecated]
 ```
 
 **Use Cases**:
@@ -403,7 +396,7 @@ View conversion accuracy reaches 98%, supporting batch conversion (10 per batch)
 
 - Go 1.24+
 - MySQL 5.7+
-- PostgreSQL 10+
+- PostgreSQL 12+
 
 ### Build
 
@@ -431,27 +424,27 @@ Configuration explanation:
 ```yaml
 # MySQL Configuration
 mysql:
-  host: localhost
-  port: 3306
-  username: root
-  password: password
-  database: test_db
-  test_only: false
-  max_open_conns: 100
-  max_idle_conns: 50
-  conn_max_lifetime: 3600
-  connection_params: charset=utf8mb4&parseTime=false&interpolateParams=true
+  host: localhost  # MySQL host
+  port: 3306  # MySQL port
+  username: root  # MySQL username
+  password: password  # MySQL password
+  database: test_db  # MySQL database name
+  test_only: false  # Test connection only, no conversion
+  max_open_conns: 100  # Maximum open connections
+  max_idle_conns: 50  # Maximum idle connections
+  conn_max_lifetime: 3600  # Connection max lifetime in seconds
+  connection_params: charset=utf8mb4&parseTime=false&interpolateParams=true&readTimeout=60s&writeTimeout=60s&timeout=30s  # MySQL connection params
 
 # PostgreSQL Configuration
 postgresql:
-  host: localhost
-  port: 5432
-  username: postgres
-  password: password
-  database: test_db
-  test_only: false
-  max_conns: 50
-  pg_connection_params: search_path=public connect_timeout=100
+  host: localhost  # PostgreSQL host
+  port: 5432  # PostgreSQL port
+  username: postgres  # PostgreSQL username
+  password: password  # PostgreSQL password
+  database: test_db  # PostgreSQL database name
+  test_only: false  # Test connection only, no conversion
+  max_conns: 50  # Maximum connections
+  pg_connection_params: search_path=public connect_timeout=300 statement_timeout=0  # PostgreSQL connection params
 
 # Conversion Configuration
 conversion:
@@ -463,26 +456,22 @@ conversion:
     functions: true   # step5: Convert Functions
     users: true       # step6: Convert Users
     table_privileges: true # step7: Convert Privileges
-    lowercase_columns: true
-    skip_existing_tables: true
-    use_table_list: false
-    table_list: [table1]
-    exclude_use_table_list: false
-    exclude_table_list: [table1]
-    validate_data: true
-    truncate_before_sync: true
+    lowercase_columns: true  # Convert column names to lowercase
+    skip_existing_tables: true  # Skip tables that already exist in PostgreSQL
+    use_table_list: false  # Enable whitelist mode for table sync
+    table_list: [table1]  # Tables to sync when use_table_list=true
+    exclude_use_table_list: false  # Enable blacklist mode for table sync
+    exclude_table_list: [table1]  # Tables to skip when exclude_use_table_list=true
+    validate_data: true  # Validate row counts after data sync
+    truncate_before_sync: false  # Truncate target tables before sync
     
     # View exclusion
-    exclude_use_view_list: false
-    exclude_view_list:
-      - name: view1
-      - name: view2
+    exclude_use_view_list: false  # Enable view exclusion list
+    exclude_view_list: [view1, view2]  # Views to skip
     
     # Function exclusion
-    exclude_use_function_list: false
-    exclude_function_list:
-      - name: func1
-      - name: func2
+    exclude_use_function_list: false  # Enable function exclusion list
+    exclude_function_list: [func1, func2]  # Functions to skip
 
   limits:
     concurrency: 10
@@ -491,7 +480,7 @@ conversion:
     max_functions_per_batch: 5
     max_indexes_per_batch: 20
     max_users_per_batch: 10
-    max_rows_per_batch: 10000
+    max_rows_per_batch: 1000
     batch_insert_size: 1000
 
 # Run Configuration
@@ -561,7 +550,7 @@ The report generates a **single-file dark-themed HTML** dashboard with:
 #### 3. truncate\_before\_sync
 
 - **Type**: Boolean
-- **Default**: true
+- **Default**: false
 - **Function**: Truncate PostgreSQL table before sync.
 
 #### 4. use\_table\_list
@@ -585,13 +574,13 @@ The report generates a **single-file dark-themed HTML** dashboard with:
 #### 7. max\_rows\_per\_batch
 
 - **Type**: Integer
-- **Default**: 10000
+- **Default**: 50000 (when unset or <= 0)
 - **Function**: Max rows per batch sync.
 
 #### 8. batch\_insert\_size
 
 - **Type**: Integer
-- **Default**: 10000
+- **Default**: 50000 (when unset or <= 0)
 - **Function**: Batch insert size.
 
 #### 9. show\_progress
