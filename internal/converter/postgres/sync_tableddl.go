@@ -64,23 +64,29 @@ var (
 	reVirtual       = regexp.MustCompile(`(?i)\s+VIRTUAL`)
 )
 
-func extractPrimaryKeyColumn(line string) string {
+func extractPrimaryKeyColumns(line string) []string {
 	openIdx := strings.Index(line, "(")
 	closeIdx := strings.LastIndex(line, ")")
 	if openIdx == -1 || closeIdx == -1 || closeIdx <= openIdx {
-		return ""
+		return []string{}
 	}
 
 	content := strings.TrimSpace(line[openIdx+1 : closeIdx])
 	if content == "" {
-		return ""
+		return []string{}
 	}
 
-	firstColumn := strings.Split(content, ",")[0]
-	firstColumn = strings.TrimSpace(firstColumn)
-	firstColumn = strings.Trim(firstColumn, `"`)
-	firstColumn = strings.Trim(firstColumn, "`")
-	return firstColumn
+	parts := strings.Split(content, ",")
+	var columns []string
+	for _, part := range parts {
+		col := strings.TrimSpace(part)
+		col = strings.Trim(col, `"`)
+		col = strings.Trim(col, "`")
+		if col != "" {
+			columns = append(columns, col)
+		}
+	}
+	return columns
 }
 
 // 基本类型正则缓存
@@ -925,7 +931,7 @@ func cleanTypeDefinition(typeDefinition string) string {
 }
 
 // ConvertTableDDL 转换MySQL表DDL到PostgreSQL
-func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLResult, error) {
+func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool, distributedByColumns ...string) (*ConvertTableDDLResult, error) {
 	mysqlDDL = strings.ReplaceAll(mysqlDDL, "`", "\"")
 
 	columnNamesMap := make(map[string]string)
@@ -941,7 +947,7 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 	lines := strings.Split(columnsDefinition, "\n")
 
 	var columnDefinitions []string
-	var primaryKeyColumn string
+	var primaryKeyColumns []string
 	columnNames := make(map[string]string)
 	generatedExpressionMap := make(map[string]string)
 
@@ -1005,14 +1011,14 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 
 		// 先处理 PRIMARY KEY（即使包含 USING BTREE/HASH 也要提取主键列名）
 		if strings.HasPrefix(strings.ToUpper(trimmedLine), "PRIMARY KEY") {
-			pkColumn := extractPrimaryKeyColumn(trimmedLine)
-			if pkColumn == "" {
+			pkColumns := extractPrimaryKeyColumns(trimmedLine)
+			if len(pkColumns) == 0 {
 				pkMatch := rePrimaryKey.FindStringSubmatch(trimmedLine)
 				if len(pkMatch) > 1 {
-					primaryKeyColumn = pkMatch[1]
+					primaryKeyColumns = []string{pkMatch[1]}
 				}
 			} else {
-				primaryKeyColumn = pkColumn
+				primaryKeyColumns = pkColumns
 			}
 			continue
 		}
@@ -1124,17 +1130,38 @@ func ConvertTableDDL(mysqlDDL string, lowercaseColumns bool) (*ConvertTableDDLRe
 		result.WriteString(fmt.Sprintf(`%s`, columnDef))
 	}
 
-	if primaryKeyColumn != "" {
-		if originalColumnName, ok := columnNames[strings.ToLower(primaryKeyColumn)]; ok {
-			primaryKeyColumn = originalColumnName
-			if lowercaseColumns {
-				primaryKeyColumn = strings.ToLower(primaryKeyColumn)
+	if len(primaryKeyColumns) > 0 {
+		var quotedCols []string
+		for _, pkCol := range primaryKeyColumns {
+			col := pkCol
+			if originalColumnName, ok := columnNames[strings.ToLower(pkCol)]; ok {
+				col = originalColumnName
 			}
+			if lowercaseColumns {
+				col = strings.ToLower(col)
+			}
+			quotedCols = append(quotedCols, fmt.Sprintf(`"%s"`, col))
 		}
-		result.WriteString(fmt.Sprintf(`,  PRIMARY KEY ("%s")`, primaryKeyColumn))
+		cols := strings.Join(quotedCols, ", ")
+		result.WriteString(fmt.Sprintf(`,  PRIMARY KEY (%s)`, cols))
 	}
 
 	result.WriteString(`)`)
+
+	// MPP 模式：添加 DISTRIBUTED BY 子句
+	if len(distributedByColumns) > 0 {
+		var quotedCols []string
+		for _, col := range distributedByColumns {
+			finalCol := col
+			if lowercaseColumns {
+				finalCol = strings.ToLower(finalCol)
+			}
+			quotedCols = append(quotedCols, fmt.Sprintf(`"%s"`, finalCol))
+		}
+		cols := strings.Join(quotedCols, ", ")
+		result.WriteString(fmt.Sprintf(` DISTRIBUTED BY (%s)`, cols))
+	}
+
 	var partitionDDLs []string
 	if !isTemporary && partitionExpression != "" && len(partitionDefs) > 0 {
 		pgPartitionExpr := convertPartitionExpression(partitionExpression)
