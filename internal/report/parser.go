@@ -28,6 +28,10 @@ type ParsedReport struct {
 	TotalFunctions  int
 	TotalUsers      int
 	TotalPrivileges int
+	ViewNames       []string
+	FunctionNames   []string
+	ViewDetails     []ObjectDetail
+	FunctionDetails []ObjectDetail
 	// 进度信息（用于标识迁移是否完成）
 	ProgressCurrent  int
 	ProgressTotal    int
@@ -45,6 +49,7 @@ type StageStat struct {
 type TableDetail struct {
 	Name       string
 	RowCount   int64
+	RowKnown   bool
 	Validation string // "数据一致"|"数据不一致"|"跳过验证"|"空表"|"已转换"|"已存在"
 	HasError   bool
 	ErrorMsg   string
@@ -62,6 +67,12 @@ type InconsistentTable struct {
 	Name     string
 	MySQLCnt int64
 	PGCnt    int64
+}
+
+// ObjectDetail 视图/函数等对象的同步状态。
+type ObjectDetail struct {
+	Name   string
+	Status string // "成功"|"失败"
 }
 
 // ParseLog 解析 conversion.log 生成报告数据
@@ -85,6 +96,10 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 	rePaginatedSync := regexp.MustCompile(`\[[\d\-\s:]+\]\s*分页同步表\s+(\S+)\s+完成，共处理\s+(\d+)\s+行数据`)
 	// [2026-04-07 11:27:37] 分页同步表 act_hi_comment 完成，10 行数据，数据不一致
 	rePaginatedSyncWithStatus := regexp.MustCompile(`\[[\d\-\s:]+\]\s*分页同步表\s+(\S+)\s+完成，(\d+)\s+行数据，(数据一致|数据不一致|跳过验证)`)
+	// 进度: 12.34% (1/200) : 同步表 case_xxx 数据成功，共有 10 行数据，跳过验证
+	reSyncSuccessWithRows := regexp.MustCompile(`(?:\[[\d\-\s:]+\]\s*)?(?:进度:\s*[\d.]+%\s*\(\d+/\d+\)\s*:\s*)?同步表\s+(\S+)\s+数据成功，共有\s+(\d+)\s+行数据，(数据一致|数据不一致|跳过验证)\s*`)
+	// 进度条混合行: ... ETA: 进度: 92.00% (185/200) : 同步表 case_xxx 完成，100000 行数据，跳过验证
+	reSyncDoneWithRows := regexp.MustCompile(`同步表\s+(\S+)\s+完成[，,]\s*([\d,]+)\s+行数据[，,]\s*(数据一致|数据不一致|跳过验证)\s*`)
 	// [2026-04-07 10:24:00] 进度: 100.00% (192/192)
 	reProgress := regexp.MustCompile(`\[[\d\-\s:]+\]\s*进度:\s*[\d.]+%\s*\((\d+)/(\d+)\)`)
 	// [2026-04-07 10:23:53] 表MySQL 的DDL、数据、view、索引、函数、用户和权限的转换到 PostgreSQL ...
@@ -107,6 +122,14 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 	rePrimaryKey := regexp.MustCompile(`\[[\d\-\s:]+\]\s*表\s+(\S+)\s+的主键是\s+\S+，将使用基于主键的分页`)
 	// [2026-04-07 11:27:37] 插入表 case_01_integers 数据失败: ...
 	reTableError := regexp.MustCompile(`\[[\d\-\s:]+\]\s*(插入表|查询表|创建表|更新表)\s+(\S+)\s+(?:数据|结构|索引|权限).*?失败[::]\s*(.+)`)
+	// 视图成功: 转换表视图 xxx 成功 / 转换视图 xxx 成功
+	reViewSuccess := regexp.MustCompile(`(?:进度:\s*[\d.]+%\s*\(\d+/\d+\)\s*:\s*)?转换(?:表)?视图\s+(\S+)\s+成功`)
+	// 视图失败: 错误: 执行视图 xxx DDL失败: ...
+	reViewFailure := regexp.MustCompile(`执行视图\s+(\S+)\s+DDL失败`)
+	// 函数成功: 转换函数 xxx 成功
+	reFunctionSuccess := regexp.MustCompile(`(?:进度:\s*[\d.]+%\s*\(\d+/\d+\)\s*:\s*)?转换函数\s+(\S+)\s+成功`)
+	// 函数失败: 错误: 执行函数 xxx DDL失败: ...
+	reFunctionFailure := regexp.MustCompile(`执行函数\s+(\S+)\s+DDL失败`)
 	// 转换完成
 	reConversionDone := regexp.MustCompile(`\[[\d\-\s:]+\]\s*转换完成`)
 
@@ -115,6 +138,10 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 	seenInconsistent := make(map[string]bool)
 	seenStages := make(map[string]bool)
 	seenWarnings := make(map[string]bool)
+	seenViews := make(map[string]bool)
+	seenFunctions := make(map[string]bool)
+	viewIndex := make(map[string]int)
+	functionIndex := make(map[string]int)
 
 	scanner := bufio.NewScanner(f)
 	// 增大 buffer 以容纳长行
@@ -228,10 +255,11 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 		// 解析转换成功的表（去重）
 		if m := reTableSuccess.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
+			tableKey := normalizeObjectName(tableName)
+			if !seenTables[tableKey] {
+				seenTables[tableKey] = true
 				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: 0, Validation: "已转换",
+					Name: tableName, RowCount: 0, RowKnown: false, Validation: "已转换",
 				})
 				r.TotalTables++
 			}
@@ -240,56 +268,59 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 		// 解析"表已存在，跳过创建"（去重）
 		if m := reTableExists.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
+			tableKey := normalizeObjectName(tableName)
+			if !seenTables[tableKey] {
+				seenTables[tableKey] = true
 				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: 0, Validation: "已存在",
+					Name: tableName, RowCount: 0, RowKnown: false, Validation: "已存在",
 				})
 				r.TotalTables++
+			} else if td, ok := findTableDetail(r.TableDetails, tableName); ok {
+				td.Validation = "已存在"
 			}
 		}
 
 		// 解析"表同步完成"（去重）
 		if m := reTableSyncDone.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			rowCount, _ := strconv.ParseInt(m[2], 10, 64)
+			rowCount := parseRowCount(m[2])
 			validation := m[3]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
-				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: rowCount, Validation: validation,
-				})
-				r.TotalTables++
-			}
+			upsertTableDetailWithRows(r, seenTables, tableName, rowCount, validation)
 			r.TotalRows += rowCount
 		}
 
 		// 解析"分页同步表 完成，共处理 N 行数据"（去重）
 		if m := rePaginatedSync.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			rowCount, _ := strconv.ParseInt(m[2], 10, 64)
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
-				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: rowCount, Validation: "跳过验证",
-				})
-				r.TotalTables++
-			}
+			rowCount := parseRowCount(m[2])
+			upsertTableDetailWithRows(r, seenTables, tableName, rowCount, "跳过验证")
 			r.TotalRows += rowCount
 		}
 
 		// 解析"分页同步表 完成，N 行数据，数据一致/不一致"（去重）
 		if m := rePaginatedSyncWithStatus.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			rowCount, _ := strconv.ParseInt(m[2], 10, 64)
+			rowCount := parseRowCount(m[2])
 			validation := m[3]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
-				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: rowCount, Validation: validation,
-				})
-				r.TotalTables++
-			}
+			upsertTableDetailWithRows(r, seenTables, tableName, rowCount, validation)
+			r.TotalRows += rowCount
+		}
+
+		// 解析"同步表 ... 数据成功，共有 N 行数据，状态"（去重并更新）
+		if m := reSyncSuccessWithRows.FindStringSubmatch(line); len(m) > 1 {
+			tableName := m[1]
+			rowCount := parseRowCount(m[2])
+			validation := m[3]
+			upsertTableDetailWithRows(r, seenTables, tableName, rowCount, validation)
+			r.TotalRows += rowCount
+		}
+
+		// 解析"同步表 ... 完成，N 行数据，状态"（兼容进度条混合日志）
+		if m := reSyncDoneWithRows.FindStringSubmatch(line); len(m) > 1 {
+			tableName := m[1]
+			rowCount := parseRowCount(m[2])
+			validation := m[3]
+			upsertTableDetailWithRows(r, seenTables, tableName, rowCount, validation)
 			r.TotalRows += rowCount
 		}
 
@@ -303,22 +334,30 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 		// 解析空表（去重）
 		if m := reEmptyTable.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
+			tableKey := normalizeObjectName(tableName)
+			if !seenTables[tableKey] {
+				seenTables[tableKey] = true
 				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: 0, Validation: "空表",
+					Name: tableName, RowCount: 0, RowKnown: true, Validation: "空表",
 				})
+			} else if td, ok := findTableDetail(r.TableDetails, tableName); ok {
+				td.RowCount = 0
+				td.RowKnown = true
+				td.Validation = "空表"
 			}
 		}
 
 		// 解析数据不一致（去重）
 		if m := reDataInconsistent.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[1]
-			if !seenTables[tableName] {
-				seenTables[tableName] = true
+			tableKey := normalizeObjectName(tableName)
+			if !seenTables[tableKey] {
+				seenTables[tableKey] = true
 				r.TableDetails = append(r.TableDetails, TableDetail{
-					Name: tableName, RowCount: 0, Validation: "数据不一致",
+					Name: tableName, RowCount: 0, RowKnown: false, Validation: "数据不一致",
 				})
+			} else if td, ok := findTableDetail(r.TableDetails, tableName); ok {
+				td.Validation = "数据不一致"
 			}
 		}
 
@@ -347,6 +386,26 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 			// 仅记录，不单独建表详情（表详情已由其他模式创建）
 		}
 
+		// 解析视图名称（成功和失败都记录，便于报告展示完整对象集）
+		if m := reViewSuccess.FindStringSubmatch(line); len(m) > 1 {
+			appendUniqueName(&r.ViewNames, seenViews, m[1])
+			upsertObjectDetail(&r.ViewDetails, viewIndex, m[1], "成功")
+		}
+		if m := reViewFailure.FindStringSubmatch(line); len(m) > 1 {
+			appendUniqueName(&r.ViewNames, seenViews, m[1])
+			upsertObjectDetail(&r.ViewDetails, viewIndex, m[1], "失败")
+		}
+
+		// 解析函数名称（成功和失败都记录，便于报告展示完整对象集）
+		if m := reFunctionSuccess.FindStringSubmatch(line); len(m) > 1 {
+			appendUniqueName(&r.FunctionNames, seenFunctions, m[1])
+			upsertObjectDetail(&r.FunctionDetails, functionIndex, m[1], "成功")
+		}
+		if m := reFunctionFailure.FindStringSubmatch(line); len(m) > 1 {
+			appendUniqueName(&r.FunctionNames, seenFunctions, m[1])
+			upsertObjectDetail(&r.FunctionDetails, functionIndex, m[1], "失败")
+		}
+
 		// 解析表级错误（conversion.log 中的错误，关联到表详情）
 		if m := reTableError.FindStringSubmatch(line); len(m) > 1 {
 			tableName := m[2]
@@ -366,8 +425,11 @@ func ParseLog(logPath string) (*ParsedReport, error) {
 		}
 	}
 
-	// 汇总总行数（如果 stage stats 里有表数据行数，且前面没有从表详情累加过）
-	if r.TotalRows == 0 {
+	// 汇总总行数：优先以表详情最终值为准，避免日志多格式导致重复累加。
+	if hasKnownRows(r.TableDetails) {
+		r.TotalRows = sumKnownRows(r.TableDetails)
+	} else if r.TotalRows == 0 {
+		// 兜底：若未解析到表级行数，退回阶段汇总中的“表数据”计数。
 		for _, s := range r.StageStats {
 			if strings.Contains(s.Name, "表数据") {
 				r.TotalRows = int64(s.ObjectCount)
@@ -396,6 +458,7 @@ func ParseErrors(report *ParsedReport, errorPath string) error {
 	report.ErrorFile = errorPath
 
 	reError := regexp.MustCompile(`\[.*?\]\s*ERROR:\s*(.+)`)
+	reAbnormal := regexp.MustCompile(`\[ABNORMAL\]\s*(.+)`)
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
@@ -403,7 +466,7 @@ func ParseErrors(report *ParsedReport, errorPath string) error {
 	seenErrors := make(map[string]bool)
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := stripANSI(scanner.Text())
 		if m := reError.FindStringSubmatch(line); len(m) > 1 {
 			errMsg := strings.TrimSpace(m[1])
 			if !seenErrors[errMsg] {
@@ -411,17 +474,115 @@ func ParseErrors(report *ParsedReport, errorPath string) error {
 				report.Errors = append(report.Errors, errMsg)
 			}
 		}
+		if m := reAbnormal.FindStringSubmatch(line); len(m) > 1 {
+			abnormalMsg := "[ABNORMAL] " + strings.TrimSpace(m[1])
+			if !seenErrors[abnormalMsg] {
+				seenErrors[abnormalMsg] = true
+				report.Errors = append(report.Errors, abnormalMsg)
+			}
+		}
 	}
 
 	return nil
 }
 
+// stripANSI 移除日志中的 ANSI 控制符，便于稳定解析。
+func stripANSI(s string) string {
+	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansi.ReplaceAllString(s, "")
+}
+
 // findTableDetail 在表详情列表中查找指定表
 func findTableDetail(details []TableDetail, name string) (*TableDetail, bool) {
+	target := normalizeObjectName(name)
 	for i := range details {
-		if details[i].Name == name {
+		if normalizeObjectName(details[i].Name) == target {
 			return &details[i], true
 		}
 	}
 	return nil, false
+}
+
+// normalizeObjectName 统一对象名用于去重和匹配（大小写不敏感）。
+func normalizeObjectName(name string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(name), "`"))
+}
+
+// parseRowCount 解析可能带千分位逗号的行数字符串。
+func parseRowCount(raw string) int64 {
+	clean := strings.ReplaceAll(strings.TrimSpace(raw), ",", "")
+	n, err := strconv.ParseInt(clean, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// hasKnownRows 判断是否存在已解析到真实行数的表。
+func hasKnownRows(details []TableDetail) bool {
+	for _, td := range details {
+		if td.RowKnown {
+			return true
+		}
+	}
+	return false
+}
+
+// sumKnownRows 汇总所有已解析到真实行数的表数据量。
+func sumKnownRows(details []TableDetail) int64 {
+	var total int64
+	for _, td := range details {
+		if td.RowKnown {
+			total += td.RowCount
+		}
+	}
+	return total
+}
+
+// upsertTableDetailWithRows 统一维护带行数信息的表详情，避免多处重复逻辑。
+func upsertTableDetailWithRows(r *ParsedReport, seenTables map[string]bool, tableName string, rowCount int64, validation string) {
+	tableKey := normalizeObjectName(tableName)
+	if !seenTables[tableKey] {
+		seenTables[tableKey] = true
+		r.TableDetails = append(r.TableDetails, TableDetail{
+			Name: tableName, RowCount: rowCount, RowKnown: true, Validation: validation,
+		})
+		r.TotalTables++
+		return
+	}
+	if td, ok := findTableDetail(r.TableDetails, tableName); ok {
+		td.RowCount = rowCount
+		td.RowKnown = true
+		td.Validation = validation
+	}
+}
+
+// appendUniqueName 向对象列表追加去重后的名称。
+func appendUniqueName(names *[]string, seen map[string]bool, name string) {
+	key := normalizeObjectName(name)
+	if key == "" || seen[key] {
+		return
+	}
+	seen[key] = true
+	*names = append(*names, name)
+}
+
+// upsertObjectDetail 维护对象同步状态，失败状态优先级高于成功。
+func upsertObjectDetail(details *[]ObjectDetail, index map[string]int, name string, status string) {
+	key := normalizeObjectName(name)
+	if key == "" {
+		return
+	}
+	if pos, ok := index[key]; ok {
+		// 若已是失败则保持失败；若本次失败则覆盖成功。
+		if (*details)[pos].Status == "失败" {
+			return
+		}
+		if status == "失败" {
+			(*details)[pos].Status = status
+		}
+		return
+	}
+	index[key] = len(*details)
+	*details = append(*details, ObjectDetail{Name: name, Status: status})
 }
