@@ -1,8 +1,10 @@
 package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -16,12 +18,6 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
 	defer f.Close()
 
 	now := time.Now().Format("2006-01-02 15:04:05")
-	consistentCount := len(r.TableDetails) - len(r.Inconsistent)
-	for _, td := range r.TableDetails {
-		if td.Validation == "空表" {
-			consistentCount--
-		}
-	}
 
 	// 计算各阶段最大耗时用于柱状图比例
 	maxDur := 0.0
@@ -43,6 +39,8 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
 		}
 	}
 
+	// 构建表详情渲染数据
+	tableItems := make([]tableRenderItem, 0, len(r.TableDetails))
 	var stageRows strings.Builder
 	for _, s := range r.StageStats {
 		barW := 0.0
@@ -58,53 +56,54 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
         </div>`, s.Name, s.ObjectCount, barW, s.Duration))
 	}
 
-	var tableRows strings.Builder
-	for i, td := range r.TableDetails {
-		statusClass := ""
-		statusText := ""
-		switch td.Validation {
-		case "数据一致":
-			statusClass = "ok"
-			statusText = "一致"
-		case "数据不一致":
-			statusClass = "err"
-			statusText = "不一致"
-		case "跳过验证":
-			statusClass = "skip"
-			statusText = "跳过"
-		case "空表":
-			statusClass = "skip"
-			statusText = "空表"
-		case "已转换":
-			statusClass = "ok"
-			statusText = "成功"
-		case "已存在":
-			statusClass = "skip"
-			statusText = "已存在"
-		default:
-			statusClass = "skip"
-			statusText = "完成"
-		}
-
-		extraInfo := ""
-		if td.HasError {
-			extraInfo = `<span class="cell-indicator err" title="` + escapeHTML(td.ErrorMsg) + `">ERR</span>`
-		} else if td.Warning != "" {
-			extraInfo = `<span class="cell-indicator warn" title="` + escapeHTML(td.Warning) + `">WRN</span>`
-		}
-
+	for _, td := range r.TableDetails {
+		statusClass, statusText, extraInfo := renderTableStatus(td)
 		rowCnt := "-"
-		if td.RowCount > 0 {
+		if td.RowKnown {
 			rowCnt = formatNum(td.RowCount)
 		}
-		tableRows.WriteString(fmt.Sprintf(`
+		tableItems = append(tableItems, tableRenderItem{
+			Name:        td.Name,
+			Rows:        rowCnt,
+			StatusClass: statusClass,
+			StatusText:  statusText,
+			ExtraInfo:   extraInfo,
+			RowCount:    td.RowCount,
+			RowKnown:    td.RowKnown,
+		})
+	}
+
+	// 仅对有真实行数的表按行数倒序取前 20 张表
+	topItems := make([]tableRenderItem, 0, len(tableItems))
+	for _, item := range tableItems {
+		if item.RowKnown {
+			topItems = append(topItems, item)
+		}
+	}
+	sort.SliceStable(topItems, func(i, j int) bool {
+		if topItems[i].RowCount == topItems[j].RowCount {
+			return topItems[i].Name < topItems[j].Name
+		}
+		return topItems[i].RowCount > topItems[j].RowCount
+	})
+	if len(topItems) > 20 {
+		topItems = topItems[:20]
+	}
+	var topTableRows strings.Builder
+	for i, item := range topItems {
+		topTableRows.WriteString(fmt.Sprintf(`
         <tr>
           <td class="idx">%d</td>
           <td class="tname">%s</td>
           <td class="num trows">%s</td>
           <td><span class="badge %s">%s</span>%s</td>
-        </tr>`, i+1, td.Name, rowCnt, statusClass, statusText, extraInfo))
+        </tr>`, i+1, escapeHTML(item.Name), item.Rows, item.StatusClass, item.StatusText, item.ExtraInfo))
 	}
+
+	viewItems := buildObjectRenderItems(r.ViewDetails, r.ViewNames)
+	functionItems := buildObjectRenderItems(r.FunctionDetails, r.FunctionNames)
+	viewCount := len(viewItems)
+	functionCount := len(functionItems)
 
 	var inconsistentRows strings.Builder
 	for _, inc := range r.Inconsistent {
@@ -146,10 +145,26 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
 	}
 
 	stageRowsStr := stageRows.String()
-	tableRowsStr := tableRows.String()
+	topTableRowsStr := topTableRows.String()
 	inconsistentRowsStr := inconsistentRows.String()
 	warningRowsStr := warningRows.String()
 	errorRowsStr := errorRows.String()
+	tableItemsJSON := mustJSON(tableItems)
+	viewItemsJSON := mustJSON(viewItems)
+	functionItemsJSON := mustJSON(functionItems)
+
+	tableHint := "支持搜索和分页，每页 50 条。"
+	if len(tableItems) > 1000 {
+		tableHint = "当前表数量超过 1000，默认分页展示并支持搜索。"
+	}
+	viewHint := "支持搜索和分页，每页 50 条。"
+	if len(viewItems) > 500 {
+		viewHint = "当前视图数量超过 500，默认分页展示并支持搜索。"
+	}
+	functionHint := "支持搜索和分页，每页 50 条。"
+	if len(functionItems) > 500 {
+		functionHint = "当前函数数量超过 500，默认分页展示并支持搜索。"
+	}
 
 	// 数据库版本行
 	dbInfo := ""
@@ -557,6 +572,11 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
     color: var(--amber);
     border: 1px solid rgba(245,158,11,.25);
   }
+  .badge.neutral {
+    background: rgba(148,163,184,.12);
+    color: var(--text-dim);
+    border: 1px solid rgba(148,163,184,.25);
+  }
 
   /* Cell indicators */
   .cell-indicator {
@@ -624,6 +644,65 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
     font-weight: 700;
     color: var(--amber);
     margin-right: 8px;
+  }
+
+  /* ===== LARGE OBJECT LIST ===== */
+  .section-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  .list-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .list-toolbar input {
+    flex: 1;
+    min-width: 220px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .list-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .pager {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .pager button {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pager button[disabled] {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+  .pager .pager-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
   }
 
   /* ===== INCONSISTENT TABLE ===== */
@@ -702,10 +781,10 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
     </div>
   </div>
 
-  <!-- TABLE DETAILS -->
+  <!-- TOP TABLES -->
   <div class="section">
     <div class="section-header">
-      <h2>📋 Tables</h2>
+      <h2>🏆 Top 20 Tables By Rows</h2>
       <span class="tag">%d items</span>
     </div>
     <div class="section-body" style="padding:0;overflow-x:auto;">
@@ -722,7 +801,104 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
         </tbody>
       </table>
     </div>
-  </div>`, now, r.LogFile, dbInfo, progressBar, r.TotalTables, formatNum(r.TotalRows), r.TotalViews, r.TotalIndexes, r.TotalFunctions, len(r.Errors), stageRowsStr, totalDurStr, avgSpeed, len(r.TableDetails), tableRowsStr)
+  </div>
+
+  <!-- TABLE DETAILS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>📋 Tables</h2>
+      <span class="tag">%d items</span>
+    </div>
+    <div class="section-body">
+      <div class="section-note">%s</div>
+      <div class="list-toolbar">
+        <input id="tables-search" placeholder="搜索表名..." />
+        <span class="list-meta" id="tables-meta"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Table</th>
+              <th style="text-align:right">Rows</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="tables-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="tables-prev">Prev</button>
+        <button id="tables-next">Next</button>
+        <span class="pager-info" id="tables-page"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEWS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>👁 Views</h2>
+      <span class="tag">%d items</span>
+    </div>
+    <div class="section-body">
+      <div class="section-note">%s</div>
+      <div class="list-toolbar">
+        <input id="views-search" placeholder="搜索视图名..." />
+        <span class="list-meta" id="views-meta"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>View Name</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="views-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="views-prev">Prev</button>
+        <button id="views-next">Next</button>
+        <span class="pager-info" id="views-page"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FUNCTIONS -->
+  <div class="section">
+    <div class="section-header">
+      <h2>🧠 Functions</h2>
+      <span class="tag">%d items</span>
+    </div>
+    <div class="section-body">
+      <div class="section-note">%s</div>
+      <div class="list-toolbar">
+        <input id="functions-search" placeholder="搜索函数名..." />
+        <span class="list-meta" id="functions-meta"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Function Name</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="functions-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="functions-prev">Prev</button>
+        <button id="functions-next">Next</button>
+        <span class="pager-info" id="functions-page"></span>
+      </div>
+    </div>
+  </div>`, now, r.LogFile, dbInfo, progressBar, r.TotalTables, formatNum(r.TotalRows), viewCount, r.TotalIndexes, functionCount, len(r.Errors), stageRowsStr, totalDurStr, avgSpeed, len(topItems), topTableRowsStr, len(r.TableDetails), tableHint, viewCount, viewHint, functionCount, functionHint)
 
 	if len(r.Inconsistent) > 0 {
 		html += fmt.Sprintf(`
@@ -778,18 +954,295 @@ func GenerateHTML(r *ParsedReport, outputPath string) error {
 	}
 
 	html += fmt.Sprintf(`
+  <script id="data-tables" type="application/json">%s</script>
+  <script id="data-views" type="application/json">%s</script>
+  <script id="data-functions" type="application/json">%s</script>
+  <script>
+    (function () {
+      const PAGE_SIZE = 50;
+
+      function parseData(id, fallback) {
+        const el = document.getElementById(id);
+        if (!el || !el.textContent) return fallback;
+        try { return JSON.parse(el.textContent); } catch (e) { return fallback; }
+      }
+      function escapeHtml(v) {
+        return String(v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function setupTablePager(config) {
+        const input = document.getElementById(config.searchId);
+        const body = document.getElementById(config.bodyId);
+        const meta = document.getElementById(config.metaId);
+        const prev = document.getElementById(config.prevId);
+        const next = document.getElementById(config.nextId);
+        const page = document.getElementById(config.pageId);
+        const source = config.source || [];
+
+        let keyword = "";
+        let pageNo = 1;
+
+        function filteredItems() {
+          if (!keyword) return source;
+          const k = keyword.toLowerCase();
+          return source.filter(item => {
+            const n = typeof item === "string" ? item : (item.name || "");
+            return n.toLowerCase().includes(k);
+          });
+        }
+
+        function render() {
+          const items = filteredItems();
+          const total = items.length;
+          const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+          if (pageNo > totalPages) pageNo = totalPages;
+          const start = (pageNo - 1) * PAGE_SIZE;
+          const list = items.slice(start, start + PAGE_SIZE);
+
+          if (config.type === "table") {
+            body.innerHTML = list.map((item, idx) => {
+              const rowNo = start + idx + 1;
+              const extra = item.extraInfo || "";
+              const statusClass = item.statusClass || "neutral";
+              const statusText = escapeHtml(item.statusText || "已完成");
+              const name = escapeHtml(item.name || "-");
+              const rows = escapeHtml(item.rows || "-");
+              return '<tr>' +
+                '<td class="idx">' + rowNo + '</td>' +
+                '<td class="tname">' + name + '</td>' +
+                '<td class="num trows">' + rows + '</td>' +
+                '<td><span class="badge ' + statusClass + '">' + statusText + '</span>' + extra + '</td>' +
+                '</tr>';
+            }).join("");
+          } else if (config.type === "object") {
+            body.innerHTML = list.map((item, idx) => {
+              const rowNo = start + idx + 1;
+              const name = escapeHtml(item.name || "-");
+              const statusClass = item.statusClass || "neutral";
+              const statusText = escapeHtml(item.statusText || "未记录");
+              return '<tr>' +
+                '<td class="idx">' + rowNo + '</td>' +
+                '<td class="tname">' + name + '</td>' +
+                '<td><span class="badge ' + statusClass + '">' + statusText + '</span></td>' +
+                '</tr>';
+            }).join("");
+          } else {
+            body.innerHTML = list.map((name, idx) => {
+              const rowNo = start + idx + 1;
+              return '<tr>' +
+                '<td class="idx">' + rowNo + '</td>' +
+                '<td class="tname">' + (name || "-") + '</td>' +
+                '</tr>';
+            }).join("");
+          }
+
+          if (total === 0) {
+            const col = config.type === "table" ? 4 : (config.type === "object" ? 3 : 2);
+            body.innerHTML = '<tr><td colspan="' + col + '" style="text-align:center;color:#94a3b8;padding:14px;">无匹配项</td></tr>';
+          }
+
+          meta.textContent = "当前 " + total + " 条";
+          page.textContent = "第 " + pageNo + "/" + totalPages + " 页";
+          prev.disabled = pageNo <= 1;
+          next.disabled = pageNo >= totalPages;
+        }
+
+        input.addEventListener("input", function () {
+          keyword = this.value.trim();
+          pageNo = 1;
+          render();
+        });
+        prev.addEventListener("click", function () {
+          if (pageNo > 1) {
+            pageNo--;
+            render();
+          }
+        });
+        next.addEventListener("click", function () {
+          const totalPages = Math.max(1, Math.ceil(filteredItems().length / PAGE_SIZE));
+          if (pageNo < totalPages) {
+            pageNo++;
+            render();
+          }
+        });
+
+        render();
+      }
+
+      setupTablePager({
+        type: "table",
+        source: parseData("data-tables", []),
+        searchId: "tables-search",
+        bodyId: "tables-body",
+        metaId: "tables-meta",
+        prevId: "tables-prev",
+        nextId: "tables-next",
+        pageId: "tables-page"
+      });
+      setupTablePager({
+        type: "object",
+        source: parseData("data-views", []),
+        searchId: "views-search",
+        bodyId: "views-body",
+        metaId: "views-meta",
+        prevId: "views-prev",
+        nextId: "views-next",
+        pageId: "views-page"
+      });
+      setupTablePager({
+        type: "object",
+        source: parseData("data-functions", []),
+        searchId: "functions-search",
+        bodyId: "functions-body",
+        metaId: "functions-meta",
+        prevId: "functions-prev",
+        nextId: "functions-next",
+        pageId: "functions-page"
+      });
+    })();
+  </script>
   <!-- FOOTER -->
   <div class="footer">
     Generated by <span>mysql2pg report</span> · %s
   </div>
 </div>
 </body>
-</html>`, now)
+</html>`, tableItemsJSON, viewItemsJSON, functionItemsJSON, now)
 
 	_, err = f.WriteString(html)
 	return err
 }
 
+type tableRenderItem struct {
+	Name        string `json:"name"`
+	Rows        string `json:"rows"`
+	StatusClass string `json:"statusClass"`
+	StatusText  string `json:"statusText"`
+	ExtraInfo   string `json:"extraInfo"`
+	RowCount    int64  `json:"-"`
+	RowKnown    bool   `json:"-"`
+}
+
+type objectRenderItem struct {
+	Name        string `json:"name"`
+	StatusClass string `json:"statusClass"`
+	StatusText  string `json:"statusText"`
+}
+
+// renderTableStatus 生成表状态的样式和文本。
+func renderTableStatus(td TableDetail) (string, string, string) {
+	statusClass := ""
+	statusText := ""
+	switch td.Validation {
+	case "数据一致":
+		statusClass = "ok"
+		statusText = "一致"
+	case "数据不一致":
+		statusClass = "err"
+		statusText = "不一致"
+	case "跳过验证":
+		statusClass = "ok"
+		statusText = "已完成"
+	case "空表":
+		statusClass = "neutral"
+		statusText = "空表"
+	case "已转换":
+		statusClass = "ok"
+		statusText = "成功"
+	case "已存在":
+		statusClass = "neutral"
+		statusText = "已存在"
+	default:
+		statusClass = "neutral"
+		statusText = "未记录"
+	}
+
+	extraInfo := ""
+	if td.HasError {
+		extraInfo = `<span class="cell-indicator err" title="` + escapeHTML(td.ErrorMsg) + `">ERR</span>`
+	} else if td.Warning != "" {
+		extraInfo = `<span class="cell-indicator warn" title="` + escapeHTML(td.Warning) + `">WRN</span>`
+	}
+	return statusClass, statusText, extraInfo
+}
+
+// buildObjectRenderItems 构建对象渲染列表并附带同步状态。
+func buildObjectRenderItems(details []ObjectDetail, fallbackNames []string) []objectRenderItem {
+	items := make([]objectRenderItem, 0, len(details))
+	if len(details) == 0 {
+		names := dedupSortedNames(fallbackNames)
+		for _, n := range names {
+			items = append(items, objectRenderItem{
+				Name:        n,
+				StatusClass: "neutral",
+				StatusText:  "未记录",
+			})
+		}
+		return items
+	}
+	for _, d := range details {
+		statusClass := "ok"
+		statusText := "已完成"
+		if d.Status == "失败" {
+			statusClass = "err"
+			statusText = "失败"
+		}
+		items = append(items, objectRenderItem{
+			Name:        d.Name,
+			StatusClass: statusClass,
+			StatusText:  statusText,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].StatusClass == items[j].StatusClass {
+			return items[i].Name < items[j].Name
+		}
+		return objectStatusPriority(items[i].StatusClass) < objectStatusPriority(items[j].StatusClass)
+	})
+	return items
+}
+
+// objectStatusPriority 定义对象状态排序优先级（失败优先显示）。
+func objectStatusPriority(statusClass string) int {
+	switch statusClass {
+	case "err":
+		return 0
+	case "ok":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// dedupSortedNames 对对象名去重并按字典序排序。
+func dedupSortedNames(names []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(names))
+	for _, n := range names {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		result = append(result, n)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// mustJSON 将对象序列化为 JSON 字符串，失败时返回空数组。
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// formatNum 将数字格式化为千分位字符串。
 func formatNum(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	for i := len(s) - 3; i > 0; i -= 3 {
@@ -798,6 +1251,7 @@ func formatNum(n int64) string {
 	return s
 }
 
+// formatDuration 将秒数格式化为可读时长。
 func formatDuration(seconds float64) string {
 	if seconds < 60 {
 		return fmt.Sprintf("%.1fs", seconds)
@@ -813,6 +1267,7 @@ func formatDuration(seconds float64) string {
 	return fmt.Sprintf("%dh %dm %ds", h, m, s)
 }
 
+// escapeHTML 对 HTML 特殊字符做转义。
 func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
