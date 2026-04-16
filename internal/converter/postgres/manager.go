@@ -1266,7 +1266,14 @@ func (m *Manager) convertTables(tables []mysql.TableInfo, semaphore chan struct{
 		semaphore <- struct{}{}
 		currentTableIndex++
 
-		pgResult, err := ConvertTableDDL(table.DDL, m.config.Conversion.Options.LowercaseColumns)
+		// MPP 模式：使用主键列作为分布键
+		var distByCols []string
+		if m.config.Conversion.MPP.Enabled {
+			// 从 DDL 中提取主键列
+			distByCols = extractPrimaryKeyColumnsFromDDL(table.DDL)
+		}
+
+		pgResult, err := ConvertTableDDL(table.DDL, m.config.Conversion.Options.LowercaseColumns, distByCols...)
 		if err != nil {
 			// 记录转换失败的 MySQL 表的部分转换结果
 			m.Log("转换表 %s，MySQL DDL: %s", table.Name, table.DDL)
@@ -1493,7 +1500,7 @@ func (m *Manager) convertFunctions(functions []mysql.FunctionInfo, semaphore cha
 				m.completedTasks++
 				m.mutex.Unlock()
 				m.updateProgress()
-				continue  // ← 移除错误的 <-semaphore
+				continue // 移除错误的 semaphore
 			}
 		}
 
@@ -1970,4 +1977,17 @@ func shouldSkipFunction(funcName string, excludeSet config.StringSet) bool {
 	}
 	_, exists := excludeSet[strings.ToLower(funcName)]
 	return exists
+}
+
+// extractPrimaryKeyColumnsFromDDL 从 MySQL DDL 中提取主键列
+func extractPrimaryKeyColumnsFromDDL(mysqlDDL string) []string {
+	// 复用 sync_tableddl.go 中的函数
+	lines := strings.Split(mysqlDDL, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(trimmed), "PRIMARY KEY") {
+			return extractPrimaryKeyColumns(trimmed)
+		}
+	}
+	return []string{}
 }

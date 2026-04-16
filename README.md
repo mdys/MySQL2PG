@@ -199,13 +199,14 @@ Start
 - **Description**: Provides exclusion lists for views and functions to flexibly control which views and functions to sync.
 - **View Exclusion** (`exclude_use_view_list`):
   - `conversion.options.exclude_use_view_list: true` - Enable view exclusion mode, skip views in `exclude_view_list`.
-  - `conversion.options.exclude_view_list: [view1, view2]` - List of views to skip.
+  - `conversion.options.exclude_view_list` - List of views to skip (object list format).
 - **Function Exclusion** (`exclude_use_function_list`):
   - `conversion.options.exclude_use_function_list: true` - Enable function exclusion mode, skip functions in `exclude_function_list`.
-  - `conversion.options.exclude_function_list: [func1, func2]` - List of functions to skip.
+  - `conversion.options.exclude_function_list` - List of functions to skip (object list format).
 - **Notes**:
   - View and function names are case-insensitive (automatically converted to lowercase for matching).
-  - Configuration uses simple inline array syntax: `[item1, item2]`.
+  - Configure exclusion lists as object items, for example `- name: v_xxx`.
+  - Do not use string arrays (`[item1, item2]`) or boolean values for these two list fields.
   - Skipped objects are logged and counted in progress statistics.
   - Useful for skipping complex/temporary views or functions that don't need migration.
 
@@ -219,11 +220,17 @@ conversion:
     
     # Skip specific views (e.g., complex reporting views)
     exclude_use_view_list: true
-    exclude_view_list: [v_complex_report, v_temp_stats, v_old_dashboard]
+    exclude_view_list:
+      - name: v_complex_report
+      - name: v_temp_stats
+      - name: v_old_dashboard
     
     # Skip specific functions (e.g., deprecated or MySQL-only functions)
     exclude_use_function_list: true
-    exclude_function_list: [func_calc_commission, func_get_user_level, func_deprecated]
+    exclude_function_list:
+      - name: func_calc_commission
+      - name: func_get_user_level
+      - name: func_deprecated
 ```
 
 **Use Cases**:
@@ -467,11 +474,15 @@ conversion:
     
     # View exclusion
     exclude_use_view_list: false
-    exclude_view_list: [view1, view2]
+    exclude_view_list:
+      - name: view1
+      - name: view2
     
     # Function exclusion
     exclude_use_function_list: false
-    exclude_function_list: [func1, func2]
+    exclude_function_list:
+      - name: func1
+      - name: func2
 
   limits:
     concurrency: 10

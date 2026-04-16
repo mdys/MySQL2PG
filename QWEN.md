@@ -221,17 +221,18 @@ conversion:
 
     # View exclusion (skip specified views during migration)
     exclude_use_view_list: false        # Enable view exclusion mode
-    exclude_view_list: [v_complex_report, v_temp_stats]   # Views to skip (case-insensitive)
+    exclude_view_list: [view1, view2]                 # Views to skip (case-insensitive, object list format)
 
     # Function exclusion (skip specified functions during migration)
     exclude_use_function_list: false    # Enable function exclusion mode
-    exclude_function_list: [func_deprecated, func_mysql_only]  # Functions to skip (case-insensitive)
+    exclude_function_list:  [func1, func2]            # Functions to skip (case-insensitive, object list format)
 
 **View/Function Exclusion Use Cases**:
 - Skip complex/temporary views that don't need migration
 - Skip deprecated or MySQL-specific functions
 - Skip objects that have PostgreSQL-native alternatives
 - All names are case-insensitive and logged when skipped
+- Configure `exclude_view_list` and `exclude_function_list` as object lists (`- name: xxx`), not string arrays.
 
   limits:
     concurrency: 10             # Concurrent goroutines
