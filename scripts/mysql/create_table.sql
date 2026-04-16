@@ -2411,12 +2411,9 @@ DROP TABLE IF EXISTS case_157_json_generated_index;
 CREATE TABLE case_157_json_generated_index (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '主键',
   payload JSON NOT NULL COMMENT 'JSON 数据',
-  biz_id VARCHAR(64) GENERATED ALWAYS AS (json_unquote(json_extract(payload, '$.bizId'))) STORED COMMENT '业务 ID',
-  event_ts DATETIME(3) GENERATED ALWAYS AS (str_to_date(json_unquote(json_extract(payload, '$.eventTime')), '%Y-%m-%d %H:%i:%s.%f')) VIRTUAL COMMENT '事件时间',
   tags JSON COMMENT '标签',
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
   updated_at TIMESTAMP(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
-  UNIQUE KEY uk_biz_id (biz_id),
   INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='JSON 与生成列混合';
 
