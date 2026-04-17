@@ -27,7 +27,7 @@ DROP TABLE IF EXISTS case_02_boolean;
 CREATE TABLE case_02_boolean (
   id int auto_increment primary key,
   is_active tinyint(1),             -- -> BOOLEAN
-  status tinyint(4),                -- -> SMALLINT (not 1, so not boolean)
+  status tinyint(10),                -- -> SMALLINT (not 1, so not boolean)
   is_deleted TINYINT(1)             -- -> BOOLEAN (case insensitive)
 ) ENGINE=InnoDB;
 
