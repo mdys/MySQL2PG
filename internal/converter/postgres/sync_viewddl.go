@@ -144,6 +144,8 @@ var (
 	reInterval  = regexp.MustCompile(`(?i)(\S[^+\-]*\S)\s*([+\-])\s*interval\s+([+\-]?\d+)\s+([\w_]+)`)
 	reIndexHint = regexp.MustCompile(`(?i)\b(?:force|use|ignore)\s+index\s*(?:for\s+(?:join|order\s+by|group\s+by)\s*)?\([^)]+\)`)
 	reISNULL    = regexp.MustCompile(`(?i)\bisnull\s*\(\s*([^)]+)\s*\)`)
+	// 匹配 REGEXP_LIKE 函数 (MySQL 8.0+)
+	reRegexpLike = regexp.MustCompile(`(?i)\bregexp_like\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 )
 
 // ConvertViewDDL 将MySQL的VIEW_DEFINITION转换为PostgreSQL的CREATE VIEW语句,从information_schema.VIEWS中读取的VIEW_DEFINITION字段内容
@@ -175,6 +177,12 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = replaceToDaysExpressions(processed)
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace to_days in view definition for view '%s'", viewName)
+	}
+
+	// 将 REGEXP_LIKE(expr, pattern) 转换为 expr ~ pattern (PostgreSQL 正则匹配)
+	processed = replaceRegexpLikeExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace REGEXP_LIKE in view definition for view '%s'", viewName)
 	}
 
 	// 移除三段式数据库名前缀（例如 "db"."table"."col" -> "table"."col"）
@@ -966,6 +974,20 @@ func replaceToDaysExpressions(s string) string {
 		idx = pos + len(replacement)
 	}
 	return out
+}
+
+// replaceRegexpLikeExpressions 将 REGEXP_LIKE(expr, pattern) 转成 expr ~ pattern
+// MySQL 8.0+ 的 REGEXP_LIKE 函数在 PostgreSQL 中对应 ~ 操作符（区分大小写）
+func replaceRegexpLikeExpressions(s string) string {
+	return reRegexpLike.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reRegexpLike.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		expr := strings.TrimSpace(submatch[1])
+		pattern := strings.TrimSpace(submatch[2])
+		return fmt.Sprintf("%s ~ %s", expr, pattern)
+	})
 }
 
 // replaceConcatExpressions 将 concat(a,b,c) 转成 a || b || c（尽量处理嵌套）
