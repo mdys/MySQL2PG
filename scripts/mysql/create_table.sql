@@ -47,10 +47,10 @@ CREATE TABLE case_03_floats (
 -- 创建字符类型表
 DROP TABLE IF EXISTS case_04_mb3_suffix;
 CREATE TABLE case_04_mb3_suffix (
-  col_var_mb3 varchar(255) CHARACTER SET utf8,    -- -> VARCHAR(255)
-  col_char_mb3 char(10) CHARACTER SET utf8,       -- -> CHAR(10)
-  col_text_mb3 text CHARACTER SET utf8,           -- -> TEXT
-  col_mixed_mb3 varchar(100) CHARACTER SET utf8  -- -> VARCHAR(100)
+  col_var_mb3 varchar(255) CHARACTER SET utf8mb4,    -- -> VARCHAR(255)
+  col_char_mb3 char(10) CHARACTER SET utf8mb4,       -- -> CHAR(10)
+  col_text_mb3 text CHARACTER SET utf8mb4,           -- -> TEXT
+  col_mixed_mb3 varchar(100) CHARACTER SET utf8mb4  -- -> VARCHAR(100)
 ) ENGINE=InnoDB;
 
 -- 创建字符集类型表

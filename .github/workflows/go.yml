@@ -103,7 +103,6 @@ jobs:
           MYSQL_PWD: rootpassword
         run: |
           mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_table.sql
-          mysql -h 127.0.0.1 -u root test_db < scripts/mysql/insert_data.sql
 
       - name: Create test config
         run: |

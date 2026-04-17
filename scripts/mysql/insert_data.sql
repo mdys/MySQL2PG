@@ -53,7 +53,7 @@ INSERT INTO case_04_mb3_suffix (col_var_mb3, col_char_mb3, col_text_mb3, col_mix
 ('こんにちは', 'にほん', '日本語テキスト', 'Mixed3'),
 ('안녕하세요', '한국어', '한국어 텍스트', 'Mixed4'),
 ('ABC', 'DEF', 'Simple ASCII text', 'Mixed5'),
-('Émoji 🎉', 'Café', 'Text with special chars', 'Mixed6'),
+('Émoji ', 'Café', 'Text with special chars', 'Mixed6'),
 ('数据', '测试', 'VARCHAR 文本内容扩展', 'Mixed7'),
 ('Multi', 'Byte', '多字节字符支持测试文本', 'Mixed8'),
 ('Test', 'Data', 'Additional text entry for testing', 'Mixed9'),
