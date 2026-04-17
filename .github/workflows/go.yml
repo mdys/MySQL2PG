@@ -139,7 +139,7 @@ jobs:
               data: true
               view: true
               indexes: true
-              functions: true
+              functions: false
               users: true
               table_privileges: true
               lowercase_columns: true
