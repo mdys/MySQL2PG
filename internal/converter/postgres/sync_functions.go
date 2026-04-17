@@ -84,8 +84,8 @@ var (
 	reEndIfIf         = regexp.MustCompile(`(?i)END\s+IF;\s*END\s+IF;`)
 	reEndLoopLoop     = regexp.MustCompile(`(?i)END\s+LOOP;\s*END\s+LOOP;`)
 	reTooManyEnds     = regexp.MustCompile(`(?i)(end\s+){3,}`)
-	// 增强变量声明匹配，支持更多类型和格式
-	reVarDecl = regexp.MustCompile(`(?i)\s*(\w+)\s+(INT|VARCHAR|TEXT|DECIMAL|DATE|TIME|TIMESTAMP|BOOLEAN|FLOAT|DOUBLE|CHAR|REFCURSOR|TINYINT|BIGINT|MEDIUMINT|SMALLINT)\s*(?:UNSIGNED)?\s*(?:\((\d+(?:,\d+)?)\))?\s*(?:DEFAULT\s+([^;]+))?;`)
+	// 增强变量声明匹配，支持更多类型和格式（包括 NUMERIC）
+	reVarDecl = regexp.MustCompile(`(?i)\s*(\w+)\s+(INT|VARCHAR|TEXT|DECIMAL|NUMERIC|DATE|TIME|TIMESTAMP|BOOLEAN|FLOAT|DOUBLE|CHAR|REFCURSOR|TINYINT|BIGINT|MEDIUMINT|SMALLINT)\s*(?:UNSIGNED)?\s*(?:\((\d+(?:,\d+)?)\))?\s*(?:DEFAULT\s+([^;]+))?;`)
 
 	// 基础清理相关
 	reBegin           = regexp.MustCompile(`(?i)BEGIN\s*`)
@@ -133,7 +133,7 @@ var (
 	reRowCountAssign = regexp.MustCompile(`(?i)(\w+)\s*:=\s*ROW_COUNT\(\)\s*;?`)
 	reDoneEqTrue     = regexp.MustCompile(`(?i)\bdone\s*=\s*1\b`)
 	reDoneEqFalse    = regexp.MustCompile(`(?i)\bdone\s*=\s*0\b`)
-	reEndLoopTail    = regexp.MustCompile(`(?i)\bEND\s+LOOP\s*;\s*[A-Za-z_][A-Za-z0-9_]*`)
+	reEndLoopTail    = regexp.MustCompile(`(?i)\bEND\s+LOOP\s+[A-Za-z_][A-Za-z0-9_]*\s*;`)
 	reIdentifierOnly = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// 类型修饰符清理
@@ -1162,7 +1162,7 @@ func (c *FunctionConverter) handleVariables() {
 
 			// 构建 PG 声明
 			varDecl := varName + " " + pgType
-			if (pgType == "VARCHAR" || pgType == "CHAR" || pgType == "DECIMAL") && varSize != "" {
+			if (pgType == "VARCHAR" || pgType == "CHAR" || pgType == "DECIMAL" || pgType == "NUMERIC") && varSize != "" {
 				varDecl += fmt.Sprintf("(%s)", varSize)
 			}
 			if varDefault != "" {
