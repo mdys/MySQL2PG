@@ -363,7 +363,8 @@ BEGIN
 END //
 DELIMITER ;
 
-DELIMITER //
+DELIMITER //  -- 必须先定义分隔符
+
 DROP FUNCTION IF EXISTS fn_case_compat_memberratio;
 CREATE FUNCTION fn_case_compat_memberratio(_startdate VARCHAR(255), _stopdate VARCHAR(255))
 RETURNS double
@@ -371,23 +372,27 @@ BEGIN
     DECLARE done BOOLEAN DEFAULT false;
     DECLARE _day INT DEFAULT 0;
     DECLARE _days INT DEFAULT 0;
-    DECLARE cur_days CURSOR FOR SELECT 1 UNION ALL SELECT 2;
+    DECLARE cur_days CURSOR FOR SELECT 1 AS val UNION ALL SELECT 2 AS val;
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-    #兼容性案例：hash注释、done=1、loop尾标签
+
+    -- 兼容性案例：标准注释、布尔判断、loop正确标签
     OPEN cur_days;
     read_loop: LOOP
         FETCH cur_days INTO _day;
-        IF done=1 THEN
+        IF done = TRUE THEN  -- 布尔判断
             LEAVE read_loop;
         END IF;
         IF _startdate <> '' AND _stopdate <> '' THEN
             SET _days = _days + _day;
         END IF;
-    END LOOP; cur_LOOP
+    END LOOP read_loop;  -- 修复标签
     CLOSE cur_days;
+
     RETURN _days;
 END //
+
 DELIMITER ;
+
 
 DELIMITER //
 DROP FUNCTION IF EXISTS fn_case_compat_songday;
