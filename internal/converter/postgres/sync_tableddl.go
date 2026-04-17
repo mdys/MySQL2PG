@@ -80,8 +80,18 @@ func extractPrimaryKeyColumns(line string) []string {
 	var columns []string
 	for _, part := range parts {
 		col := strings.TrimSpace(part)
+		// 先移除引号
 		col = strings.Trim(col, `"`)
 		col = strings.Trim(col, "`")
+		// 移除列名后面的排序方向关键字 (ASC/DESC) 和右括号
+		colParts := strings.Fields(col)
+		if len(colParts) > 0 {
+			col = colParts[0]
+		}
+		// 再次清理引号和右括号
+		col = strings.Trim(col, `"`)
+		col = strings.Trim(col, "`")
+		col = strings.TrimRight(col, ")")
 		if col != "" {
 			columns = append(columns, col)
 		}

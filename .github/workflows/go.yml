@@ -102,7 +102,11 @@ jobs:
         env:
           MYSQL_PWD: rootpassword
         run: |
+          mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_user.sql
           mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_table.sql
+          mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_index.sql
+          mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_view.sql
+          mysql -h 127.0.0.1 -u root test_db < scripts/mysql/create_function.sql
 
       - name: Create test config
         run: |
@@ -169,10 +173,10 @@ jobs:
             show_log_in_console: false
           EOF
 
-      - name: Run integration tests
+      - name: Run MySQL2PG
         run: |
-          chmod +x scripts/integrationtests/run_integration_tests.sh
-          bash scripts/integrationtests/run_integration_tests.sh
+          go build -o mysql2pg ./cmd/
+          ./mysql2pg -c config.yml
 
       - name: Upload integration test logs
         if: always()
