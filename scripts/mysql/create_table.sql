@@ -25,9 +25,10 @@ CREATE TABLE case_01_integers (
 -- 创建布尔类型表
 DROP TABLE IF EXISTS case_02_boolean;
 CREATE TABLE case_02_boolean (
-  is_active tinyint(1) primary key,           -- -> BOOLEAN
-  status tinyint(4),              -- -> SMALLINT (not 1, so not boolean)
-  is_deleted TINYINT(1)           -- -> BOOLEAN (case insensitive)
+  id int auto_increment primary key,
+  is_active tinyint(1),             -- -> BOOLEAN
+  status tinyint(4),                -- -> SMALLINT (not 1, so not boolean)
+  is_deleted TINYINT(1)             -- -> BOOLEAN (case insensitive)
 ) ENGINE=InnoDB;
 
 -- 创建浮点数类型表
