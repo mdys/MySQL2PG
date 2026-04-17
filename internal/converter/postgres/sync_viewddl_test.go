@@ -140,3 +140,36 @@ FROM table1 t1, table2 t2`
 		t.Errorf("REGEXP_LIKE(t1.c1, t2.pattern) 转换失败：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_Locate 测试 LOCATE 函数转换
+func TestConvertViewDDL_Locate(t *testing.T) {
+	viewSQL := `SELECT
+    LOCATE('test', case_05_charsets.c4) AS test_pos_c4,
+    LOCATE('abc', name) AS pos_name,
+    LOCATE(sub, str) AS pos_var
+FROM case_05_charsets`
+
+	ddl, err := ConvertViewDDL("view_case25_locate", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查转换结果（LOCATE('test', c4) -> strpos(c4, 'test')）
+	// SQL 会被转为小写
+	if !strings.Contains(ddl, "strpos(case_05_charsets.c4, 'test')") {
+		t.Errorf("LOCATE 未正确转换为 strpos：%s", ddl)
+	}
+
+	// 检查不再包含 LOCATE 函数调用
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, "locate(") {
+		t.Errorf("转换后仍包含 locate 函数：%s", ddl)
+	}
+
+	// 检查参数顺序正确（substr 和 str 位置交换）
+	if !strings.Contains(ddl, "strpos(name, 'abc')") {
+		t.Errorf("LOCATE 参数顺序错误，应该是 strpos(str, substr)：%s", ddl)
+	}
+}

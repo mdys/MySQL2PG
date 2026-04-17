@@ -146,6 +146,8 @@ var (
 	reISNULL    = regexp.MustCompile(`(?i)\bisnull\s*\(\s*([^)]+)\s*\)`)
 	// 匹配 REGEXP_LIKE 函数 (MySQL 8.0+)
 	reRegexpLike = regexp.MustCompile(`(?i)\bregexp_like\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 LOCATE 函数 (MySQL)
+	reLocate = regexp.MustCompile(`(?i)\blocate\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 )
 
 // ConvertViewDDL 将MySQL的VIEW_DEFINITION转换为PostgreSQL的CREATE VIEW语句,从information_schema.VIEWS中读取的VIEW_DEFINITION字段内容
@@ -183,6 +185,12 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = replaceRegexpLikeExpressions(processed)
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace REGEXP_LIKE in view definition for view '%s'", viewName)
+	}
+
+	// 将 LOCATE(substr, str) 转换为 STRPOS(str, substr) (PostgreSQL)
+	processed = replaceLocateExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace LOCATE in view definition for view '%s'", viewName)
 	}
 
 	// 移除三段式数据库名前缀（例如 "db"."table"."col" -> "table"."col"）
@@ -987,6 +995,21 @@ func replaceRegexpLikeExpressions(s string) string {
 		expr := strings.TrimSpace(submatch[1])
 		pattern := strings.TrimSpace(submatch[2])
 		return fmt.Sprintf("%s ~ %s", expr, pattern)
+	})
+}
+
+// replaceLocateExpressions 将 LOCATE(substr, str) 转成 STRPOS(str, substr)
+// MySQL LOCATE(substr, str) 返回 substr 在 str 中首次出现的位置（从 1 开始）
+// PostgreSQL STRPOS(str, substr) 功能相同
+func replaceLocateExpressions(s string) string {
+	return reLocate.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reLocate.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		substr := strings.TrimSpace(submatch[1])
+		str := strings.TrimSpace(submatch[2])
+		return fmt.Sprintf("STRPOS(%s, %s)", str, substr)
 	})
 }
 
