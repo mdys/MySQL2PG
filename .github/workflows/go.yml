@@ -169,10 +169,10 @@ jobs:
             show_log_in_console: false
           EOF
 
-      - name: Run integration tests
+      - name: Run MySQL2PG
         run: |
-          chmod +x scripts/integrationtests/run_integration_tests.sh
-          bash scripts/integrationtests/run_integration_tests.sh
+          go build -o mysql2pg ./cmd/
+          ./mysql2pg -c config.yml
 
       - name: Upload integration test logs
         if: always()
