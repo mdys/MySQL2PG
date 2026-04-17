@@ -71,7 +71,8 @@
       "Bash(git diff *)",
       "WebSearch",
       "WebFetch(docs.yugabyte.com)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(git pull *)"
     ]
   },
   "$version": 3
