@@ -844,22 +844,15 @@ func (c *FunctionConverter) processDateDiff(body string) string {
 		params = append(params, strings.TrimSpace(currentParam))
 
 		if len(params) == 2 {
-			// DATEDIFF(a, b) -> (a::date - b::date)
+			// DATEDIFF(a, b) -> (a - b)
 			// 注意：MySQL DATEDIFF(a, b) = a - b. PG date - date = integer days.
 			// 所以顺序是 (a - b).
-			// 移除 ::date 强制转换，因为这似乎导致了 :date 解析问题 (sale_date 被误删?)
-			// 如果输入是 timestamp，这可能导致返回 interval 而不是 days，但在当前场景下（sale_date）应该是 date。
-			// 如果需要 days，应该用 DATE_PART('day', a - b) 或者 EXTRACT(day from a - b)
-			// 但这里我们先尝试去掉 ::date
 			newExpr := fmt.Sprintf("(%s - %s)", params[0], params[1])
-			// fmt.Printf("DEBUG: processDateDiff replacing %s with %s\n", fullMatch, newExpr)
 			body = strings.Replace(body, fullMatch, newExpr, 1)
 		} else {
-			// 参数数量不对，跳过或记录错误？
-			// 为了避免死循环，我们必须破坏这个匹配。
-			// 暂时替换 DATEDIFF 为 DATEDIFF_UNHANDLED
-			fmt.Printf("WARNING: DATEDIFF with %d params found, expected 2. Params: %v\n", len(params), params)
-			body = strings.Replace(body, "DATEDIFF", "DATEDIFF_UNHANDLED", 1)
+			// 参数数量不对，保留原 DATEDIFF 让 PostgreSQL 报错
+			// 标记为未处理，避免死循环
+			body = strings.Replace(body, fullMatch, "DATEDIFF_UNHANDLED", 1)
 		}
 	}
 	// 恢复 DATEDIFF_UNHANDLED (如果需要，或者就留着报错)
