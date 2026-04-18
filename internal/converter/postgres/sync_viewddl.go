@@ -152,6 +152,30 @@ var (
 	reJsonArrayagg = regexp.MustCompile(`(?i)\bjson_arrayagg\s*\(\s*([^)]+)\)`)
 	// 匹配 JSON_OBJECTAGG 函数 (MySQL 8.0+)
 	reJsonObjectagg = regexp.MustCompile(`(?i)\bjson_objectagg\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_INSERT 函数 (MySQL 8.0+) - 用于视图
+	reJSONInsertView = regexp.MustCompile(`(?i)\bjson_insert\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_REPLACE 函数 (MySQL 8.0+) - 用于视图
+	reJSONReplaceView = regexp.MustCompile(`(?i)\bjson_replace\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_SET 函数 (MySQL 8.0+) - 用于视图
+	reJSONSetView = regexp.MustCompile(`(?i)\bjson_set\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_REMOVE 函数 (MySQL 8.0+) - 用于视图
+	reJSONRemoveView = regexp.MustCompile(`(?i)\bjson_remove\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\)`)
+	// 匹配 JSON_MERGE_PATCH 函数 (MySQL 8.0+) - 用于视图
+	reJSONMergePatchView = regexp.MustCompile(`(?i)\bjson_merge_patch\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_KEYS 函数 (MySQL 8.0+) - 用于视图
+	reJSONKeysView = regexp.MustCompile(`(?i)\bjson_keys\s*\(\s*([^)]+)\)`)
+	// 匹配 JSON_LENGTH 函数 (MySQL 8.0+) - 用于视图
+	reJSONLengthView = regexp.MustCompile(`(?i)\bjson_length\s*\(\s*([^)]+)\)`)
+	// 匹配 INSTR 函数 (MySQL)
+	reInstr = regexp.MustCompile(`(?i)\binstr\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 RLIKE 操作符 (MySQL 8.0+) - 支持括号内的情况
+	reRLike = regexp.MustCompile(`(?i)(\([^)]+)\s+rlike\s+'([^']+)'`)
+	// 匹配 CAST(x AS SIGNED) 函数
+	reCastSigned = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+as\s+signed\)`)
+	// 匹配 CAST(x AS CHAR) 函数
+	reCastChar = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+as\s+char(?:\(\d+\))?\)`)
+	// 匹配 FORCE INDEX 提示
+	reForceIndex = regexp.MustCompile(`(?i)\bforce\s+index\s*\([^)]*\)`)
 )
 
 // ConvertViewDDL 将MySQL的VIEW_DEFINITION转换为PostgreSQL的CREATE VIEW语句,从information_schema.VIEWS中读取的VIEW_DEFINITION字段内容
@@ -208,6 +232,38 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace JSON_OBJECTAGG in view definition for view '%s'", viewName)
 	}
+
+	// 将 JSON_INSERT/JSON_REPLACE/JSON_SET 转换为 JSONB_SET (PostgreSQL)
+	processed = replaceJSONInsertView(processed)
+	processed = replaceJSONReplaceView(processed)
+	processed = replaceJSONSetView(processed)
+
+	// 将 JSON_REMOVE 转换为 JSONB_DELETE_PATH (PostgreSQL)
+	processed = replaceJSONRemoveView(processed)
+
+	// 将 JSON_MERGE_PATCH 转换为 JSONB 连接操作符 || (PostgreSQL)
+	processed = replaceJSONMergePatchView(processed)
+
+	// 将 JSON_KEYS 转换为 JSONB_OBJECT_KEYS (PostgreSQL)
+	processed = replaceJSONKeysView(processed)
+
+	// 将 JSON_LENGTH 转换为 JSONB_ARRAY_LENGTH (PostgreSQL)
+	processed = replaceJSONLengthView(processed)
+
+	// 将 INSTR(str, substr) 转换为 STRPOS(str, substr) (PostgreSQL)
+	processed = replaceInstrExpressions(processed)
+
+	// 将 RLIKE 转换为 ~ (PostgreSQL 正则匹配)
+	processed = replaceRLikeExpressions(processed)
+
+	// 将 CAST(x AS SIGNED) 转换为 CAST(x AS INTEGER) (PostgreSQL)
+	processed = replaceCastSignedExpressions(processed)
+
+	// 将 CAST(x AS CHAR) 转换为 CAST(x AS TEXT) (PostgreSQL)
+	processed = replaceCastCharExpressions(processed)
+
+	// 移除 FORCE INDEX 提示 (PostgreSQL 不支持)
+	processed = reForceIndex.ReplaceAllString(processed, "")
 
 	// 移除三段式数据库名前缀（例如 "db"."table"."col" -> "table"."col"）
 	processed = reDBPrefix.ReplaceAllString(processed, "$1")
@@ -1054,6 +1110,156 @@ func replaceJsonObjectAggExpressions(s string) string {
 		value := strings.TrimSpace(submatch[2])
 		return fmt.Sprintf("JSON_OBJECT_AGG(%s, %s)", key, value)
 	})
+}
+
+// replaceJSONInsertView 将 JSON_INSERT(doc, path, val) 转换为 JSONB_SET(doc, path, val, true)
+// MySQL JSON_INSERT: 只在路径不存在时插入
+// PostgreSQL JSONB_SET: 第四个参数为 true 时表示不存在则创建
+func replaceJSONInsertView(s string) string {
+	return reJSONInsertView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONInsertView.FindStringSubmatch(match)
+		if len(submatch) < 4 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		path := strings.TrimSpace(submatch[2])
+		val := strings.TrimSpace(submatch[3])
+		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'
+		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		return fmt.Sprintf("JSONB_SET(%s, %s, %s, true)", doc, pgPath, val)
+	})
+}
+
+// replaceJSONReplaceView 将 JSON_REPLACE(doc, path, val) 转换为 JSONB_SET(doc, path, val, false)
+// MySQL JSON_REPLACE: 只在路径存在时替换
+// PostgreSQL JSONB_SET: 第四个参数为 false 时表示仅当存在时替换
+func replaceJSONReplaceView(s string) string {
+	return reJSONReplaceView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONReplaceView.FindStringSubmatch(match)
+		if len(submatch) < 4 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		path := strings.TrimSpace(submatch[2])
+		val := strings.TrimSpace(submatch[3])
+		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		return fmt.Sprintf("JSONB_SET(%s, %s, %s, false)", doc, pgPath, val)
+	})
+}
+
+// replaceJSONSetView 将 JSON_SET(doc, path, val) 转换为 JSONB_SET(doc, path, val)
+// MySQL JSON_SET: 替换或插入（默认行为）
+// PostgreSQL JSONB_SET: 默认替换或插入
+func replaceJSONSetView(s string) string {
+	return reJSONSetView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONSetView.FindStringSubmatch(match)
+		if len(submatch) < 4 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		path := strings.TrimSpace(submatch[2])
+		val := strings.TrimSpace(submatch[3])
+		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		return fmt.Sprintf("JSONB_SET(%s, %s, %s)", doc, pgPath, val)
+	})
+}
+
+// replaceJSONRemoveView 将 JSON_REMOVE(doc, path) 转换为 doc - path 或 JSONB_DELETE_PATH(doc, path)
+// MySQL JSON_REMOVE: 从 JSON 文档中删除指定路径的数据
+// PostgreSQL: 使用 - 操作符或 JSONB_DELETE_PATH 函数
+func replaceJSONRemoveView(s string) string {
+	return reJSONRemoveView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONRemoveView.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		path := strings.TrimSpace(submatch[2])
+		// 移除 $.前缀，只保留键名
+		key := strings.TrimPrefix(path, "$.")
+		// 使用 - 操作符删除键
+		return fmt.Sprintf("%s - '%s'", doc, key)
+	})
+}
+
+// replaceJSONMergePatchView 将 JSON_MERGE_PATCH(doc1, doc2) 转换为 doc1 || doc2
+// MySQL JSON_MERGE_PATCH: JSON 文档的 RFC 7396 合并
+// PostgreSQL: 使用 || 操作符进行 JSONB 连接
+func replaceJSONMergePatchView(s string) string {
+	return reJSONMergePatchView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONMergePatchView.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		doc1 := strings.TrimSpace(submatch[1])
+		doc2 := strings.TrimSpace(submatch[2])
+		return fmt.Sprintf("(%s || %s)", doc1, doc2)
+	})
+}
+
+// replaceJSONKeysView 将 JSON_KEYS(doc) 转换为 JSONB_OBJECT_KEYS(doc)
+// MySQL JSON_KEYS: 返回 JSON 对象的键名数组
+// PostgreSQL JSONB_OBJECT_KEYS: 返回键名集合（需要配合 ARRAY 使用）
+func replaceJSONKeysView(s string) string {
+	return reJSONKeysView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONKeysView.FindStringSubmatch(match)
+		if len(submatch) < 2 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		return fmt.Sprintf("ARRAY(SELECT * FROM JSONB_OBJECT_KEYS(%s))", doc)
+	})
+}
+
+// replaceJSONLengthView 将 JSON_LENGTH(doc) 转换为 JSONB_ARRAY_LENGTH(doc) 或 JSONB_EACH_TEXT(doc)
+// MySQL JSON_LENGTH: 返回 JSON 数组的长度或对象键数
+// PostgreSQL: 对于数组使用 JSONB_ARRAY_LENGTH，对于对象使用 JSONB_EACH_TEXT
+// 这里简化处理，假设为数组
+func replaceJSONLengthView(s string) string {
+	return reJSONLengthView.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJSONLengthView.FindStringSubmatch(match)
+		if len(submatch) < 2 {
+			return match
+		}
+		doc := strings.TrimSpace(submatch[1])
+		return fmt.Sprintf("JSONB_ARRAY_LENGTH(%s)", doc)
+	})
+}
+
+// replaceInstrExpressions 将 INSTR(str, substr) 转换为 STRPOS(str, substr)
+// MySQL INSTR: 返回子串首次出现的位置（从 1 开始）
+// PostgreSQL STRPOS: 功能相同
+func replaceInstrExpressions(s string) string {
+	return reInstr.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reInstr.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		str := strings.TrimSpace(submatch[1])
+		substr := strings.TrimSpace(submatch[2])
+		return fmt.Sprintf("STRPOS(%s, %s)", str, substr)
+	})
+}
+
+// replaceRLikeExpressions 将 RLIKE 转换为 ~ (PostgreSQL 正则匹配操作符)
+// MySQL RLIKE: 正则表达式匹配
+// PostgreSQL ~: 区分大小写的正则匹配
+func replaceRLikeExpressions(s string) string {
+	return reRLike.ReplaceAllString(s, "($1 ~ '$2')")
+}
+
+// replaceCastSignedExpressions 将 CAST(x AS SIGNED) 转换为 CAST(x AS INTEGER)
+// MySQL SIGNED: 有符号整数
+// PostgreSQL INTEGER: 32 位有符号整数
+func replaceCastSignedExpressions(s string) string {
+	return reCastSigned.ReplaceAllString(s, "CAST($1 AS INTEGER)")
+}
+
+// replaceCastCharExpressions 将 CAST(x AS CHAR) 转换为 CAST(x AS TEXT)
+// MySQL CHAR: 字符类型
+// PostgreSQL TEXT: 可变长度字符串
+func replaceCastCharExpressions(s string) string {
+	return reCastChar.ReplaceAllString(s, "CAST($1 AS TEXT)")
 }
 
 // replaceConcatExpressions 将 concat(a,b,c) 转成 a || b || c（尽量处理嵌套）
