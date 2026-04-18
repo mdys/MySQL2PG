@@ -161,7 +161,7 @@ var (
 	// 匹配 JSON_REPLACE 函数 (MySQL 8.0+) - 用于视图
 	reJSONReplaceView = regexp.MustCompile(`(?i)\bjson_replace\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\s*,\s*([^)]+)\)`)
 	// 匹配 JSON_SET 函数 (MySQL 8.0+) - 用于视图
-	reJSONSetView = regexp.MustCompile(`(?i)\bjson_set\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\s*,\s*([^)]+)\)`)
+	reJSONSetView = regexp.MustCompile(`(?i)\bjson_set\s*\(\s*([^,]+)\s*,\s*(.+)\)`)
 	// 匹配 JSON_REMOVE 函数 (MySQL 8.0+) - 用于视图
 	reJSONRemoveView = regexp.MustCompile(`(?i)\bjson_remove\s*\(\s*([^,]+)\s*,\s*'([^']+?)'\)`)
 	// 匹配 JSON_MERGE_PATCH 函数 (MySQL 8.0+) - 用于视图
@@ -1201,24 +1201,51 @@ func replaceJSONReplaceView(s string) string {
 	})
 }
 
-// replaceJSONSetView 将 JSON_SET(doc, path, val) 转换为 JSONB_SET(doc::jsonb, path, to_jsonb(val))
-// MySQL JSON_SET: 替换或插入（默认行为）
-// PostgreSQL JSONB_SET: 默认替换或插入
+// replaceJSONSetView 将 JSON_SET(doc, path1, val1, path2, val2, ...) 转换为嵌套的 JSONB_SET
+// MySQL JSON_SET: 替换或插入（默认行为），支持多个路径 - 值对
+// PostgreSQL JSONB_SET: 默认替换或插入，只支持单个路径 - 值对，需要嵌套调用
 // 注意：需要将 json 类型显式转换为 jsonb，值需要用 to_jsonb() 包裹
 // PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
 func replaceJSONSetView(s string) string {
 	return reJSONSetView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONSetView.FindStringSubmatch(match)
-		if len(submatch) < 4 {
+		if len(submatch) < 3 {
 			return match
 		}
 		doc := strings.TrimSpace(submatch[1])
-		path := strings.TrimSpace(submatch[2])
-		val := strings.TrimSpace(submatch[3])
-		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
-		// 值需要用 to_jsonb() 包裹
-		pgPath := fmt.Sprintf("'{%s}'", strings.TrimPrefix(path, "$."))
-		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, to_jsonb(%s))", doc, pgPath, val)
+		argsStr := strings.TrimSpace(submatch[2])
+		
+		// 解析多个路径 - 值对：'path1', val1, 'path2', val2, ...
+		// 路径总是以引号开始，所以可以用引号来分割
+		var paths []string
+		var vals []string
+		
+		// 使用正则表达式提取所有的 'path' 和对应的值
+		rePathVal := regexp.MustCompile(`'([^']+?)'\s*,\s*([^,]+?)(?:\s*,\s*'|$)`)
+		matches := rePathVal.FindAllStringSubmatch(argsStr, -1)
+		
+		for _, m := range matches {
+			if len(m) >= 3 {
+				paths = append(paths, strings.TrimSpace(m[1]))
+				vals = append(vals, strings.TrimSpace(m[2]))
+			}
+		}
+		
+		if len(paths) == 0 || len(paths) != len(vals) {
+			return match
+		}
+		
+		// 构建嵌套的 JSONB_SET 调用
+		result := fmt.Sprintf("%s::jsonb", doc)
+		for i := range paths {
+			path := paths[i]
+			val := vals[i]
+			// 转换为 PostgreSQL 数组格式
+			pgPath := fmt.Sprintf("'{%s}'", path)
+			result = fmt.Sprintf("JSONB_SET(%s, %s, to_jsonb(%s))", result, pgPath, val)
+		}
+		
+		return result
 	})
 }
 
