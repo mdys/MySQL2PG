@@ -1245,6 +1245,7 @@ func replaceJSONMergePatchView(s string) string {
 // replaceJSONKeysView 将 JSON_KEYS(doc) 转换为 JSONB_OBJECT_KEYS(doc)
 // MySQL JSON_KEYS: 返回 JSON 对象的键名数组
 // PostgreSQL JSONB_OBJECT_KEYS: 返回键名集合（需要配合 ARRAY 使用）
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONKeysView(s string) string {
 	return reJSONKeysView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONKeysView.FindStringSubmatch(match)
@@ -1252,7 +1253,7 @@ func replaceJSONKeysView(s string) string {
 			return match
 		}
 		doc := strings.TrimSpace(submatch[1])
-		return fmt.Sprintf("ARRAY(SELECT * FROM JSONB_OBJECT_KEYS(%s))", doc)
+		return fmt.Sprintf("ARRAY(SELECT * FROM JSONB_OBJECT_KEYS(%s::jsonb))", doc)
 	})
 }
 
@@ -1260,6 +1261,7 @@ func replaceJSONKeysView(s string) string {
 // MySQL JSON_LENGTH: 返回 JSON 数组的长度或对象键数
 // PostgreSQL: 对于数组使用 JSONB_ARRAY_LENGTH，对于对象使用 JSONB_EACH_TEXT
 // 这里简化处理，假设为数组
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONLengthView(s string) string {
 	return reJSONLengthView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONLengthView.FindStringSubmatch(match)
@@ -1267,7 +1269,7 @@ func replaceJSONLengthView(s string) string {
 			return match
 		}
 		doc := strings.TrimSpace(submatch[1])
-		return fmt.Sprintf("JSONB_ARRAY_LENGTH(%s)", doc)
+		return fmt.Sprintf("JSONB_ARRAY_LENGTH(%s::jsonb)", doc)
 	})
 }
 
