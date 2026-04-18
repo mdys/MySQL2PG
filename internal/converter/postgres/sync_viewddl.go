@@ -27,6 +27,8 @@ var (
 	// 匹配 CONVERT 函数
 	reConvert = regexp.MustCompile(`(?i)\bconvert\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	reCast    = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+as\s+([^)]+)\)`)
+	// 匹配 CAST(x USING charset) 语法（MySQL 特有，PostgreSQL 不支持）
+	reCastUsing = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+using\s+[^)]+\)`)
 	// 匹配 LIMIT a,b 语法
 	reLimitOffset = regexp.MustCompile(`(?i)\blimit\s+(\d+)\s*,\s*(\d+)`)
 	// 匹配 JSON_OBJECT 函数
