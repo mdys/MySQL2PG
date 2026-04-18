@@ -148,6 +148,10 @@ var (
 	reRegexpLike = regexp.MustCompile(`(?i)\bregexp_like\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 LOCATE 函数 (MySQL)
 	reLocate = regexp.MustCompile(`(?i)\blocate\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 JSON_ARRAYAGG 函数 (MySQL 8.0+)
+	reJsonArrayagg = regexp.MustCompile(`(?i)\bjson_arrayagg\s*\(\s*([^)]+)\)`)
+	// 匹配 JSON_OBJECTAGG 函数 (MySQL 8.0+)
+	reJsonObjectagg = regexp.MustCompile(`(?i)\bjson_objectagg\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 )
 
 // ConvertViewDDL 将MySQL的VIEW_DEFINITION转换为PostgreSQL的CREATE VIEW语句,从information_schema.VIEWS中读取的VIEW_DEFINITION字段内容
@@ -191,6 +195,18 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = replaceLocateExpressions(processed)
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace LOCATE in view definition for view '%s'", viewName)
+	}
+
+	// 将 JSON_ARRAYAGG(expr) 转换为 JSON_AGG(expr) (PostgreSQL)
+	processed = replaceJsonAggExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace JSON_ARRAYAGG in view definition for view '%s'", viewName)
+	}
+
+	// 将 JSON_OBJECTAGG(key, value) 转换为 JSON_OBJECT_AGG(key, value) (PostgreSQL)
+	processed = replaceJsonObjectAggExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace JSON_OBJECTAGG in view definition for view '%s'", viewName)
 	}
 
 	// 移除三段式数据库名前缀（例如 "db"."table"."col" -> "table"."col"）
@@ -1010,6 +1026,33 @@ func replaceLocateExpressions(s string) string {
 		substr := strings.TrimSpace(submatch[1])
 		str := strings.TrimSpace(submatch[2])
 		return fmt.Sprintf("STRPOS(%s, %s)", str, substr)
+	})
+}
+
+// replaceJsonAggExpressions 将 JSON_ARRAYAGG(expr) 转成 JSON_AGG(expr)
+// MySQL 8.0+ 的 JSON_ARRAYAGG 在 PostgreSQL 中对应 JSON_AGG
+func replaceJsonAggExpressions(s string) string {
+	return reJsonArrayagg.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJsonArrayagg.FindStringSubmatch(match)
+		if len(submatch) < 2 {
+			return match
+		}
+		expr := strings.TrimSpace(submatch[1])
+		return fmt.Sprintf("JSON_AGG(%s)", expr)
+	})
+}
+
+// replaceJsonObjectAggExpressions 将 JSON_OBJECTAGG(key, value) 转成 JSON_OBJECT_AGG(key, value)
+// MySQL 8.0+ 的 JSON_OBJECTAGG 在 PostgreSQL 中对应 JSON_OBJECT_AGG
+func replaceJsonObjectAggExpressions(s string) string {
+	return reJsonObjectagg.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reJsonObjectagg.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		key := strings.TrimSpace(submatch[1])
+		value := strings.TrimSpace(submatch[2])
+		return fmt.Sprintf("JSON_OBJECT_AGG(%s, %s)", key, value)
 	})
 }
 

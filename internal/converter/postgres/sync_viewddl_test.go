@@ -173,3 +173,42 @@ FROM case_05_charsets`
 		t.Errorf("LOCATE 参数顺序错误，应该是 strpos(str, substr)：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_JsonAgg 测试 JSON_ARRAYAGG 和 JSON_OBJECTAGG 函数转换
+func TestConvertViewDDL_JsonAgg(t *testing.T) {
+	viewSQL := `SELECT
+    b.status AS status,
+    JSON_ARRAYAGG(JSON_BUILD_OBJECT('tiny', i.col_tiny)) AS int_data,
+    JSON_OBJECTAGG(b.status, JSON_BUILD_ARRAY(i.col_tiny, i.col_small)) AS status_map,
+    JSON_ARRAYAGG(i.col_tiny) AS unique_tiny
+FROM case_01_integers i
+JOIN case_02_boolean b ON i.col_tiny = b.status
+GROUP BY b.status`
+
+	ddl, err := ConvertViewDDL("view_case27_mysql8_json_agg", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// SQL 会被转为小写，检查小写形式
+	// 检查 JSON_ARRAYAGG 转换为 JSON_AGG
+	if !strings.Contains(ddl, "json_agg(") {
+		t.Errorf("JSON_ARRAYAGG 未转换为 json_agg：%s", ddl)
+	}
+
+	// 检查 JSON_OBJECTAGG 转换为 JSON_OBJECT_AGG
+	if !strings.Contains(ddl, "json_object_agg(") {
+		t.Errorf("JSON_OBJECTAGG 未转换为 json_object_agg：%s", ddl)
+	}
+
+	// 检查不再包含 MySQL 函数名
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, "json_arrayagg(") {
+		t.Errorf("转换后仍包含 json_arrayagg 函数：%s", ddl)
+	}
+	if strings.Contains(lowerDDL, "json_objectagg(") {
+		t.Errorf("转换后仍包含 json_objectagg 函数：%s", ddl)
+	}
+}
