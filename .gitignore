@@ -33,3 +33,6 @@ config.yml
 # vim auto backup file
 *~
 !OWNERS
+
+# Documentation (not for version control)
+docs/
