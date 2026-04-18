@@ -72,7 +72,17 @@
       "WebSearch",
       "WebFetch(docs.yugabyte.com)",
       "Bash(git reset *)",
-      "Bash(git pull *)"
+      "Bash(git pull *)",
+      "Bash(git *)",
+      "Bash(python3)",
+      "Bash(with)",
+      "Bash(as *)",
+      "Bash(content *)",
+      "Bash(pattern *)",
+      "Bash(replacement *)",
+      "Bash(pattern, *)",
+      "Bash(f.write)",
+      "Bash(print)"
     ]
   },
   "$version": 3

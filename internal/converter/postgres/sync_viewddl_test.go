@@ -212,3 +212,186 @@ GROUP BY b.status`
 		t.Errorf("转换后仍包含 json_objectagg 函数：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_JSONModifyFunctions 测试 JSON 修改函数转换
+func TestConvertViewDDL_JSONModifyFunctions(t *testing.T) {
+	viewSQL := `SELECT
+    JSON_INSERT(data, '$.new_key', 'new_value') AS json_inserted,
+    JSON_REPLACE(data, '$.id', 999) AS json_replaced,
+    JSON_SET(data, '$.id', 123) AS json_set,
+    JSON_REMOVE(data, '$.old_key') AS json_removed,
+    JSON_MERGE_PATCH(data, '{"status": "active"}') AS json_merged
+FROM case_08_json`
+
+	ddl, err := ConvertViewDDL("view_case39_mysql8_json_modify", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 JSON_INSERT/REPLACE/SET 转换（SQL 会被转为小写）
+	if !strings.Contains(ddl, "jsonb_set(") {
+		t.Errorf("JSON_INSERT/REPLACE/SET 未转换为 jsonb_set：%s", ddl)
+	}
+	// 检查 JSON_REMOVE 转换
+	if !strings.Contains(ddl, " - 'old_key'") {
+		t.Errorf("JSON_REMOVE 未正确转换：%s", ddl)
+	}
+	// 检查 JSON_MERGE_PATCH 转换
+	if !strings.Contains(ddl, "||") {
+		t.Errorf("JSON_MERGE_PATCH 未转换为 || 操作符：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_JSONKeysLength 测试 JSON_KEYS 和 JSON_LENGTH 转换
+func TestConvertViewDDL_JSONKeysLength(t *testing.T) {
+	viewSQL := `SELECT
+    JSON_KEYS(data) AS json_keys,
+    JSON_LENGTH(data) AS json_length
+FROM case_08_json`
+
+	ddl, err := ConvertViewDDL("view_case17_advanced_json", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 JSON_KEYS 转换（SQL 会被转为小写）
+	if !strings.Contains(ddl, "jsonb_object_keys(") {
+		t.Errorf("JSON_KEYS 未转换为 JSONB_OBJECT_KEYS：%s", ddl)
+	}
+	// 检查 JSON_LENGTH 转换
+	if !strings.Contains(ddl, "jsonb_array_length(") {
+		t.Errorf("JSON_LENGTH 未转换为 JSONB_ARRAY_LENGTH：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_InstrRLike 测试 INSTR 和 RLIKE 转换
+func TestConvertViewDDL_InstrRLike(t *testing.T) {
+	viewSQL := `SELECT
+    INSTR(c4, 'test') AS test_pos_c4,
+    (c1 RLIKE '^[A-Za-z]+$') AS is_alpha_c1,
+    (c2 RLIKE '^[0-9]+$') AS is_numeric_c2
+FROM case_05_charsets`
+
+	ddl, err := ConvertViewDDL("view_case25_mysql8_regexp", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 INSTR 转换（SQL 会被转为小写）
+	if !strings.Contains(ddl, "strpos(") {
+		t.Errorf("INSTR 未转换为 STRPOS：%s", ddl)
+	}
+	// 检查 RLIKE 转换（SQL 会被转为小写）
+	if !strings.Contains(ddl, " ~ '") {
+		t.Errorf("RLIKE 未转换为 ~ 操作符：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_CastTypes 测试 CAST 类型转换
+func TestConvertViewDDL_CastTypes(t *testing.T) {
+	viewSQL := `SELECT
+    CAST(col_float AS SIGNED) AS float_as_int,
+    CAST(col_tiny AS CHAR) AS tiny_as_string,
+    CAST(col_medium AS CHAR(10)) AS medium_as_string
+FROM case_03_floats`
+
+	ddl, err := ConvertViewDDL("view_cast_types", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 CAST(x AS SIGNED) 转换
+	if !strings.Contains(ddl, "as integer") {
+		t.Errorf("CAST(x AS SIGNED) 未转换为 CAST(x AS INTEGER)：%s", ddl)
+	}
+	// 检查 CAST(x AS CHAR) 转换
+	if !strings.Contains(ddl, "as text") {
+		t.Errorf("CAST(x AS CHAR) 未转换为 CAST(x AS TEXT)：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_ForceIndex 测试 FORCE INDEX 移除
+func TestConvertViewDDL_ForceIndex(t *testing.T) {
+	viewSQL := `SELECT COUNT(i.col_tiny) AS total_rows
+FROM case_01_integers i FORCE INDEX (PRIMARY)
+LEFT JOIN case_02_boolean b ON i.col_tiny = b.id`
+
+	ddl, err := ConvertViewDDL("view_case42_compat_optimizer_hint", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 FORCE INDEX 已被移除
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, "force index") {
+		t.Errorf("FORCE INDEX 未被移除：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_JSONObjectArray 测试 JSON_OBJECT 和 JSON_ARRAY 转换
+func TestConvertViewDDL_JSONObjectArray(t *testing.T) {
+	viewSQL := `SELECT
+		JSON_OBJECT('tiny', col_tiny, 'small', col_small) AS json_data,
+		JSON_ARRAY(col_tiny, col_small) AS json_array
+	FROM test_table`
+
+	ddl, err := ConvertViewDDL("test_json", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 JSON_OBJECT 转换为 json_build_object
+	if !strings.Contains(ddl, "json_build_object(") {
+		t.Errorf("JSON_OBJECT 未转换为 json_build_object：%s", ddl)
+	}
+	// 检查 JSON_ARRAY 转换为 json_build_array
+	if !strings.Contains(ddl, "json_build_array(") {
+		t.Errorf("JSON_ARRAY 未转换为 json_build_array：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_DateTimeFunctions 测试日期时间函数转换
+func TestConvertViewDDL_DateTimeFunctions(t *testing.T) {
+	viewSQL := `SELECT
+    DATE_ADD(d1, INTERVAL 1 WEEK) AS next_week,
+    DATE_SUB(d1, INTERVAL 1 MONTH) AS last_month,
+    TIMEDIFF(NOW(), dt1) AS time_since,
+    TO_DAYS(NOW()) AS days_since_epoch
+FROM case_09_datetime`
+
+	ddl, err := ConvertViewDDL("view_datetime_functions", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 DATE_ADD 转换
+	if !strings.Contains(ddl, "+") {
+		t.Errorf("DATE_ADD 未转换为 + 操作符：%s", ddl)
+	}
+	// 检查 DATE_SUB 转换
+	if !strings.Contains(ddl, "-") {
+		t.Errorf("DATE_SUB 未转换为 - 操作符：%s", ddl)
+	}
+	// 检查 TIMEDIFF 转换
+	if !strings.Contains(ddl, " - ") {
+		t.Errorf("TIMEDIFF 未转换为时间减法：%s", ddl)
+	}
+	// 检查 TO_DAYS 转换
+	if !strings.Contains(ddl, "extract(epoch from") {
+		t.Errorf("TO_DAYS 未转换为 extract epoch：%s", ddl)
+	}
+}
