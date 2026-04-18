@@ -1161,6 +1161,7 @@ func replaceJsonObjectAggExpressions(s string) string {
 // MySQL JSON_INSERT: 只在路径不存在时插入
 // PostgreSQL JSONB_SET: 第四个参数为 true 时表示不存在则创建
 // 注意：需要将 json 类型显式转换为 jsonb
+// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
 func replaceJSONInsertView(s string) string {
 	return reJSONInsertView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONInsertView.FindStringSubmatch(match)
@@ -1170,8 +1171,8 @@ func replaceJSONInsertView(s string) string {
 		doc := strings.TrimSpace(submatch[1])
 		path := strings.TrimSpace(submatch[2])
 		val := strings.TrimSpace(submatch[3])
-		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'
-		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
+		pgPath := fmt.Sprintf("'{%s}'", strings.TrimPrefix(path, "$."))
 		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s, true)", doc, pgPath, val)
 	})
 }
@@ -1180,6 +1181,7 @@ func replaceJSONInsertView(s string) string {
 // MySQL JSON_REPLACE: 只在路径存在时替换
 // PostgreSQL JSONB_SET: 第四个参数为 false 时表示仅当存在时替换
 // 注意：需要将 json 类型显式转换为 jsonb
+// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
 func replaceJSONReplaceView(s string) string {
 	return reJSONReplaceView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONReplaceView.FindStringSubmatch(match)
@@ -1189,7 +1191,8 @@ func replaceJSONReplaceView(s string) string {
 		doc := strings.TrimSpace(submatch[1])
 		path := strings.TrimSpace(submatch[2])
 		val := strings.TrimSpace(submatch[3])
-		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
+		pgPath := fmt.Sprintf("'{%s}'", strings.TrimPrefix(path, "$."))
 		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s, false)", doc, pgPath, val)
 	})
 }
@@ -1198,6 +1201,7 @@ func replaceJSONReplaceView(s string) string {
 // MySQL JSON_SET: 替换或插入（默认行为）
 // PostgreSQL JSONB_SET: 默认替换或插入
 // 注意：需要将 json 类型显式转换为 jsonb
+// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
 func replaceJSONSetView(s string) string {
 	return reJSONSetView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONSetView.FindStringSubmatch(match)
@@ -1207,7 +1211,8 @@ func replaceJSONSetView(s string) string {
 		doc := strings.TrimSpace(submatch[1])
 		path := strings.TrimSpace(submatch[2])
 		val := strings.TrimSpace(submatch[3])
-		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
+		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'（数组格式）
+		pgPath := fmt.Sprintf("'{%s}'", strings.TrimPrefix(path, "$."))
 		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s)", doc, pgPath, val)
 	})
 }
