@@ -1240,11 +1240,12 @@ func replaceJSONSetView(s string) string {
 		for i := range paths {
 			path := paths[i]
 			val := vals[i]
-			// 转换为 PostgreSQL 数组格式
+			// 移除 $. 前缀并转换为 PostgreSQL 数组格式
+			path = strings.TrimPrefix(path, "$.")
 			pgPath := fmt.Sprintf("'{%s}'", path)
 			result = fmt.Sprintf("JSONB_SET(%s, %s, to_jsonb(%s))", result, pgPath, val)
 		}
-		
+
 		return result
 	})
 }
