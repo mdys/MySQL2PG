@@ -337,3 +337,37 @@ LEFT JOIN case_02_boolean b ON i.col_tiny = b.id`
 		t.Errorf("FORCE INDEX 未被移除：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_DateTimeFunctions 测试日期时间函数转换
+func TestConvertViewDDL_DateTimeFunctions(t *testing.T) {
+	viewSQL := `SELECT
+    DATE_ADD(d1, INTERVAL 1 WEEK) AS next_week,
+    DATE_SUB(d1, INTERVAL 1 MONTH) AS last_month,
+    TIMEDIFF(NOW(), dt1) AS time_since,
+    TO_DAYS(NOW()) AS days_since_epoch
+FROM case_09_datetime`
+
+	ddl, err := ConvertViewDDL("view_datetime_functions", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 DATE_ADD 转换
+	if !strings.Contains(ddl, "+") {
+		t.Errorf("DATE_ADD 未转换为 + 操作符：%s", ddl)
+	}
+	// 检查 DATE_SUB 转换
+	if !strings.Contains(ddl, "-") {
+		t.Errorf("DATE_SUB 未转换为 - 操作符：%s", ddl)
+	}
+	// 检查 TIMEDIFF 转换
+	if !strings.Contains(ddl, " - ") {
+		t.Errorf("TIMEDIFF 未转换为时间减法：%s", ddl)
+	}
+	// 检查 TO_DAYS 转换
+	if !strings.Contains(ddl, "extract(epoch from") {
+		t.Errorf("TO_DAYS 未转换为 extract epoch：%s", ddl)
+	}
+}

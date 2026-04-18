@@ -20,6 +20,8 @@ var (
 	reGroupConcat = regexp.MustCompile(`(?i)group_concat\s*\(\s*(?:distinct\s+)?([^)]*)\)`)
 	// 匹配 ORDER BY 子句
 	reOrder = regexp.MustCompile(`(?i)\s+order\s+by\s+[^,]*`)
+	// 匹配 DISTINCT 关键字
+	reDistinct = regexp.MustCompile(`(?i)\bdistinct\s+`)
 	// 匹配 SEPARATOR 关键字
 	reSep = regexp.MustCompile(`(?i)\s*separator\s*['"]([^'"]+)['"]`)
 	// 匹配 CONVERT 函数
@@ -279,23 +281,56 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		return "", fmt.Errorf("failed to replace IFNULL with COALESCE in view definition for view '%s'", viewName)
 	}
 
-	// GROUP_CONCAT -> string_agg 的简单转换，保留 SEPARATOR 和 ORDER BY 的常见用法
+	// GROUP_CONCAT -> string_agg 的增强转换，支持 DISTINCT、ORDER BY 和 SEPARATOR
 	processed = reGroupConcat.ReplaceAllStringFunc(processed, func(s string) string {
 		m := reGroupConcat.FindStringSubmatch(s)
 		if len(m) < 2 {
 			return s
 		}
 		inner := m[1]
-		// 移除 ORDER BY 子句（简单处理）
-		innerClean := reOrder.ReplaceAllString(inner, "")
+		
+		// 检查是否有 DISTINCT
+		hasDistinct := strings.Contains(strings.ToUpper(inner), "DISTINCT")
+		innerNoDistinct := reDistinct.ReplaceAllString(inner, "")
+		
+		// 提取 ORDER BY 子句（如果有）
+		var orderBy string
+		orderByMatch := reOrder.FindStringSubmatch(innerNoDistinct)
+		if len(orderByMatch) > 0 {
+			orderBy = strings.TrimSpace(strings.TrimPrefix(orderByMatch[0], " "))
+			innerNoDistinct = reOrder.ReplaceAllString(innerNoDistinct, "")
+		}
+		
 		// 解析 SEPARATOR
-		sepM := reSep.FindStringSubmatch(inner)
+		sepM := reSep.FindStringSubmatch(innerNoDistinct)
 		sep := ","
 		if len(sepM) >= 2 {
 			sep = sepM[1]
-			innerClean = reSep.ReplaceAllString(innerClean, "")
+			innerNoDistinct = reSep.ReplaceAllString(innerNoDistinct, "")
 		}
-		return fmt.Sprintf("string_agg(CAST(%s AS text), '%s')", strings.TrimSpace(innerClean), sep)
+		
+		expr := strings.TrimSpace(innerNoDistinct)
+		
+		// 构建 PostgreSQL string_agg 表达式
+		var sb strings.Builder
+		sb.WriteString("string_agg(")
+		if hasDistinct {
+			sb.WriteString("DISTINCT ")
+		}
+		sb.WriteString("CAST(")
+		sb.WriteString(expr)
+		sb.WriteString(" AS text)")
+		if orderBy != "" {
+			// 将 MySQL ORDER BY 转换为 PostgreSQL 格式
+			pgOrderBy := convertMySQLOrderByToPG(orderBy)
+			sb.WriteString(", ")
+			sb.WriteString(pgOrderBy)
+		}
+		sb.WriteString(", '")
+		sb.WriteString(sep)
+		sb.WriteString("')")
+		
+		return sb.String()
 	})
 	if processed == "" {
 		return "", fmt.Errorf("failed to convert GROUP_CONCAT to string_agg in view definition for view '%s'", viewName)
@@ -971,6 +1006,16 @@ func convertMySQLDateFormatToPG(raw string) string {
 	)
 	format = replacer.Replace(format)
 	return "'" + format + "'"
+}
+
+// convertMySQLOrderByToPG 将 MySQL ORDER BY 子句转换为 PostgreSQL 格式
+// 例如："col ASC" -> "col ASC", "col DESC" -> "col DESC"
+func convertMySQLOrderByToPG(orderBy string) string {
+	// 简单处理：移除可能的引号，保持原有顺序
+	result := strings.TrimSpace(orderBy)
+	// 如果包含引号，替换为双引号
+	result = strings.ReplaceAll(result, "`", `"`)
+	return result
 }
 
 func buildJSONPathExpr(base string, rawPath string, textResult bool) string {
