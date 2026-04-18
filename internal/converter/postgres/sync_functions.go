@@ -1284,8 +1284,38 @@ func mapTypeToPG(mysqlType string) string {
 		return "BIGINT"
 	case "SMALLINT":
 		return "SMALLINT"
+	case "FLOAT":
+		return "REAL"
+	case "DECIMAL", "NUMERIC":
+		// 保留精度定义，如 DECIMAL(65,30)
+		if idx := strings.Index(mysqlType, "("); idx != -1 {
+			return strings.TrimSpace(mysqlType)
+		}
+		return "DECIMAL"
+	case "VARCHAR", "CHAR":
+		// 保留长度定义，如 VARCHAR(255)
+		if idx := strings.Index(mysqlType, "("); idx != -1 {
+			return strings.TrimSpace(mysqlType)
+		}
+		return "VARCHAR"
+	case "TEXT":
+		return "TEXT"
+	case "BOOLEAN", "BOOL":
+		return "BOOLEAN"
+	case "DATE":
+		return "DATE"
+	case "TIME":
+		return "TIME"
+	case "JSON":
+		return "JSONB"
+	case "BLOB", "LONGBLOB", "MEDIUMBLOB", "BINARY", "VARBINARY":
+		return "BYTEA"
 	default:
-		return strings.TrimSpace(mysqlType)
+		// 未知类型，返回清理后的原始类型（移除括号和 UNSIGNED 等）
+		cleanType := regexp.MustCompile(`\([^)]*\)`).ReplaceAllString(mysqlType, "")
+		cleanType = regexp.MustCompile(`(?i)\s+UNSIGNED`).ReplaceAllString(cleanType, "")
+		cleanType = regexp.MustCompile(`(?i)\s+ZEROFILL`).ReplaceAllString(cleanType, "")
+		return strings.TrimSpace(cleanType)
 	}
 }
 
@@ -1472,8 +1502,15 @@ func fixIfSyntax(body string) string {
 
 // fixLoopSyntax 修复 LOOP 语句
 func fixLoopSyntax(body string) string {
+	// MySQL WHILE ... DO → PostgreSQL WHILE ... LOOP
 	body = reWhileDo.ReplaceAllString(body, "WHILE $1 LOOP")
 	body = reEndWhile.ReplaceAllString(body, "END LOOP;")
+
+	// MySQL LEAVE label → PostgreSQL EXIT label
+	body = reLeave.ReplaceAllString(body, "EXIT")
+
+	// MySQL ITERATE label → PostgreSQL CONTINUE label
+	body = reIterate.ReplaceAllString(body, "CONTINUE")
 
 	// 移除可能的多余 END LOOP
 	body = reEndLoopArgs.ReplaceAllString(body, "\nEND LOOP $1;")
