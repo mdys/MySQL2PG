@@ -1157,9 +1157,10 @@ func replaceJsonObjectAggExpressions(s string) string {
 	})
 }
 
-// replaceJSONInsertView 将 JSON_INSERT(doc, path, val) 转换为 JSONB_SET(doc, path, val, true)
+// replaceJSONInsertView 将 JSON_INSERT(doc, path, val) 转换为 JSONB_SET(doc::jsonb, path, val, true)
 // MySQL JSON_INSERT: 只在路径不存在时插入
 // PostgreSQL JSONB_SET: 第四个参数为 true 时表示不存在则创建
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONInsertView(s string) string {
 	return reJSONInsertView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONInsertView.FindStringSubmatch(match)
@@ -1171,13 +1172,14 @@ func replaceJSONInsertView(s string) string {
 		val := strings.TrimSpace(submatch[3])
 		// PostgreSQL 路径格式：'{key}' 或 '{key,nested}'
 		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
-		return fmt.Sprintf("JSONB_SET(%s, %s, %s, true)", doc, pgPath, val)
+		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s, true)", doc, pgPath, val)
 	})
 }
 
-// replaceJSONReplaceView 将 JSON_REPLACE(doc, path, val) 转换为 JSONB_SET(doc, path, val, false)
+// replaceJSONReplaceView 将 JSON_REPLACE(doc, path, val) 转换为 JSONB_SET(doc::jsonb, path, val, false)
 // MySQL JSON_REPLACE: 只在路径存在时替换
 // PostgreSQL JSONB_SET: 第四个参数为 false 时表示仅当存在时替换
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONReplaceView(s string) string {
 	return reJSONReplaceView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONReplaceView.FindStringSubmatch(match)
@@ -1188,13 +1190,14 @@ func replaceJSONReplaceView(s string) string {
 		path := strings.TrimSpace(submatch[2])
 		val := strings.TrimSpace(submatch[3])
 		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
-		return fmt.Sprintf("JSONB_SET(%s, %s, %s, false)", doc, pgPath, val)
+		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s, false)", doc, pgPath, val)
 	})
 }
 
-// replaceJSONSetView 将 JSON_SET(doc, path, val) 转换为 JSONB_SET(doc, path, val)
+// replaceJSONSetView 将 JSON_SET(doc, path, val) 转换为 JSONB_SET(doc::jsonb, path, val)
 // MySQL JSON_SET: 替换或插入（默认行为）
 // PostgreSQL JSONB_SET: 默认替换或插入
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONSetView(s string) string {
 	return reJSONSetView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONSetView.FindStringSubmatch(match)
@@ -1205,7 +1208,7 @@ func replaceJSONSetView(s string) string {
 		path := strings.TrimSpace(submatch[2])
 		val := strings.TrimSpace(submatch[3])
 		pgPath := fmt.Sprintf("'%s'", strings.TrimPrefix(path, "$."))
-		return fmt.Sprintf("JSONB_SET(%s, %s, %s)", doc, pgPath, val)
+		return fmt.Sprintf("JSONB_SET(%s::jsonb, %s, %s)", doc, pgPath, val)
 	})
 }
 
@@ -1227,9 +1230,10 @@ func replaceJSONRemoveView(s string) string {
 	})
 }
 
-// replaceJSONMergePatchView 将 JSON_MERGE_PATCH(doc1, doc2) 转换为 doc1 || doc2
+// replaceJSONMergePatchView 将 JSON_MERGE_PATCH(doc1, doc2) 转换为 (doc1::jsonb || doc2::jsonb)
 // MySQL JSON_MERGE_PATCH: JSON 文档的 RFC 7396 合并
 // PostgreSQL: 使用 || 操作符进行 JSONB 连接
+// 注意：需要将 json 类型显式转换为 jsonb
 func replaceJSONMergePatchView(s string) string {
 	return reJSONMergePatchView.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := reJSONMergePatchView.FindStringSubmatch(match)
@@ -1238,7 +1242,7 @@ func replaceJSONMergePatchView(s string) string {
 		}
 		doc1 := strings.TrimSpace(submatch[1])
 		doc2 := strings.TrimSpace(submatch[2])
-		return fmt.Sprintf("(%s || %s)", doc1, doc2)
+		return fmt.Sprintf("(%s::jsonb || %s::jsonb)", doc1, doc2)
 	})
 }
 
