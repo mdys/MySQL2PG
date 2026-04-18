@@ -338,6 +338,30 @@ LEFT JOIN case_02_boolean b ON i.col_tiny = b.id`
 	}
 }
 
+// TestConvertViewDDL_JSONObjectArray 测试 JSON_OBJECT 和 JSON_ARRAY 转换
+func TestConvertViewDDL_JSONObjectArray(t *testing.T) {
+	viewSQL := `SELECT
+		JSON_OBJECT('tiny', col_tiny, 'small', col_small) AS json_data,
+		JSON_ARRAY(col_tiny, col_small) AS json_array
+	FROM test_table`
+
+	ddl, err := ConvertViewDDL("test_json", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查 JSON_OBJECT 转换为 json_build_object
+	if !strings.Contains(ddl, "json_build_object(") {
+		t.Errorf("JSON_OBJECT 未转换为 json_build_object：%s", ddl)
+	}
+	// 检查 JSON_ARRAY 转换为 json_build_array
+	if !strings.Contains(ddl, "json_build_array(") {
+		t.Errorf("JSON_ARRAY 未转换为 json_build_array：%s", ddl)
+	}
+}
+
 // TestConvertViewDDL_DateTimeFunctions 测试日期时间函数转换
 func TestConvertViewDDL_DateTimeFunctions(t *testing.T) {
 	viewSQL := `SELECT

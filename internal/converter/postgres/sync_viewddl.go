@@ -112,6 +112,16 @@ var (
 	reHOUR_FUNC   = regexp.MustCompile(`(?i)\bhour\s*\(\s*([^)]+)\)`)
 	reMINUTE_FUNC = regexp.MustCompile(`(?i)\bminute\s*\(\s*([^)]+)\)`)
 	reSECOND_FUNC = regexp.MustCompile(`(?i)\bsecond\s*\(\s*([^)]+)\)`)
+	// 匹配 YEARWEEK 函数
+	reYEARWEEK = regexp.MustCompile(`(?i)\byearweek\s*\(\s*([^)]+)\)`)
+	// 匹配 DAYNAME 函数
+	reDAYNAME = regexp.MustCompile(`(?i)\bdayname\s*\(\s*([^)]+)\)`)
+	// 匹配 MONTHNAME 函数
+	reMONTHNAME = regexp.MustCompile(`(?i)\bmonthname\s*\(\s*([^)]+)\)`)
+	// 匹配 QUARTER 函数
+	reQUARTER = regexp.MustCompile(`(?i)\bquarter\s*\(\s*([^)]+)\)`)
+	// 匹配 WEEK 函数
+	reWEEK = regexp.MustCompile(`(?i)\bweek\s*\(\s*([^)]+)\)`)
 	// 匹配 STR_TO_DATE 函数
 	reSTR_TO_DATE = regexp.MustCompile(`(?i)str_to_date\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 DATEDIFF 函数
@@ -601,6 +611,12 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = reHOUR_FUNC.ReplaceAllString(processed, "extract(hour from $1)::int")
 	processed = reMINUTE_FUNC.ReplaceAllString(processed, "extract(minute from $1)::int")
 	processed = reSECOND_FUNC.ReplaceAllString(processed, "extract(second from $1)::int")
+	// 新增日期时间函数转换
+	processed = reYEARWEEK.ReplaceAllString(processed, "(extract(year from $1)::int * 100 + extract(week from $1)::int)")
+	processed = reDAYNAME.ReplaceAllString(processed, "to_char($1, 'Day')")
+	processed = reMONTHNAME.ReplaceAllString(processed, "to_char($1, 'Month')")
+	processed = reQUARTER.ReplaceAllString(processed, "extract(quarter from $1)::int")
+	processed = reWEEK.ReplaceAllString(processed, "extract(week from $1)::int")
 	processed = reDATE_FORMAT.ReplaceAllStringFunc(processed, func(m string) string {
 		match := reDATE_FORMAT.FindStringSubmatch(m)
 		if len(match) < 3 {
