@@ -140,3 +140,75 @@ FROM table1 t1, table2 t2`
 		t.Errorf("REGEXP_LIKE(t1.c1, t2.pattern) 转换失败：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_Locate 测试 LOCATE 函数转换
+func TestConvertViewDDL_Locate(t *testing.T) {
+	viewSQL := `SELECT
+    LOCATE('test', case_05_charsets.c4) AS test_pos_c4,
+    LOCATE('abc', name) AS pos_name,
+    LOCATE(sub, str) AS pos_var
+FROM case_05_charsets`
+
+	ddl, err := ConvertViewDDL("view_case25_locate", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// 检查转换结果（LOCATE('test', c4) -> strpos(c4, 'test')）
+	// SQL 会被转为小写
+	if !strings.Contains(ddl, "strpos(case_05_charsets.c4, 'test')") {
+		t.Errorf("LOCATE 未正确转换为 strpos：%s", ddl)
+	}
+
+	// 检查不再包含 LOCATE 函数调用
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, "locate(") {
+		t.Errorf("转换后仍包含 locate 函数：%s", ddl)
+	}
+
+	// 检查参数顺序正确（substr 和 str 位置交换）
+	if !strings.Contains(ddl, "strpos(name, 'abc')") {
+		t.Errorf("LOCATE 参数顺序错误，应该是 strpos(str, substr)：%s", ddl)
+	}
+}
+
+// TestConvertViewDDL_JsonAgg 测试 JSON_ARRAYAGG 和 JSON_OBJECTAGG 函数转换
+func TestConvertViewDDL_JsonAgg(t *testing.T) {
+	viewSQL := `SELECT
+    b.status AS status,
+    JSON_ARRAYAGG(JSON_BUILD_OBJECT('tiny', i.col_tiny)) AS int_data,
+    JSON_OBJECTAGG(b.status, JSON_BUILD_ARRAY(i.col_tiny, i.col_small)) AS status_map,
+    JSON_ARRAYAGG(i.col_tiny) AS unique_tiny
+FROM case_01_integers i
+JOIN case_02_boolean b ON i.col_tiny = b.status
+GROUP BY b.status`
+
+	ddl, err := ConvertViewDDL("view_case27_mysql8_json_agg", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	// SQL 会被转为小写，检查小写形式
+	// 检查 JSON_ARRAYAGG 转换为 JSON_AGG
+	if !strings.Contains(ddl, "json_agg(") {
+		t.Errorf("JSON_ARRAYAGG 未转换为 json_agg：%s", ddl)
+	}
+
+	// 检查 JSON_OBJECTAGG 转换为 JSON_OBJECT_AGG
+	if !strings.Contains(ddl, "json_object_agg(") {
+		t.Errorf("JSON_OBJECTAGG 未转换为 json_object_agg：%s", ddl)
+	}
+
+	// 检查不再包含 MySQL 函数名
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, "json_arrayagg(") {
+		t.Errorf("转换后仍包含 json_arrayagg 函数：%s", ddl)
+	}
+	if strings.Contains(lowerDDL, "json_objectagg(") {
+		t.Errorf("转换后仍包含 json_objectagg 函数：%s", ddl)
+	}
+}
