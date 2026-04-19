@@ -84,8 +84,8 @@ var (
 	reEndIfIf         = regexp.MustCompile(`(?i)END\s+IF;\s*END\s+IF;`)
 	reEndLoopLoop     = regexp.MustCompile(`(?i)END\s+LOOP;\s*END\s+LOOP;`)
 	reTooManyEnds     = regexp.MustCompile(`(?i)(end\s+){3,}`)
-	// 增强变量声明匹配，支持更多类型和格式
-	reVarDecl = regexp.MustCompile(`(?i)\s*(\w+)\s+(INT|VARCHAR|TEXT|DECIMAL|DATE|TIME|TIMESTAMP|BOOLEAN|FLOAT|DOUBLE|CHAR|REFCURSOR|TINYINT|BIGINT|MEDIUMINT|SMALLINT)\s*(?:UNSIGNED)?\s*(?:\((\d+(?:,\d+)?)\))?\s*(?:DEFAULT\s+([^;]+))?;`)
+	// 增强变量声明匹配，支持更多类型和格式（包括 NUMERIC）
+	reVarDecl = regexp.MustCompile(`(?i)\s*(\w+)\s+(INT|VARCHAR|TEXT|DECIMAL|NUMERIC|DATE|TIME|TIMESTAMP|BOOLEAN|FLOAT|DOUBLE|CHAR|REFCURSOR|TINYINT|BIGINT|MEDIUMINT|SMALLINT)\s*(?:UNSIGNED)?\s*(?:\((\d+(?:,\d+)?)\))?\s*(?:DEFAULT\s+([^;]+))?;`)
 
 	// 基础清理相关
 	reBegin           = regexp.MustCompile(`(?i)BEGIN\s*`)
@@ -133,7 +133,7 @@ var (
 	reRowCountAssign = regexp.MustCompile(`(?i)(\w+)\s*:=\s*ROW_COUNT\(\)\s*;?`)
 	reDoneEqTrue     = regexp.MustCompile(`(?i)\bdone\s*=\s*1\b`)
 	reDoneEqFalse    = regexp.MustCompile(`(?i)\bdone\s*=\s*0\b`)
-	reEndLoopTail    = regexp.MustCompile(`(?i)\bEND\s+LOOP\s*;\s*[A-Za-z_][A-Za-z0-9_]*`)
+	reEndLoopTail    = regexp.MustCompile(`(?i)\bEND\s+LOOP\s+[A-Za-z_][A-Za-z0-9_]*\s*;`)
 	reIdentifierOnly = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// 类型修饰符清理
@@ -1162,7 +1162,7 @@ func (c *FunctionConverter) handleVariables() {
 
 			// 构建 PG 声明
 			varDecl := varName + " " + pgType
-			if (pgType == "VARCHAR" || pgType == "CHAR" || pgType == "DECIMAL") && varSize != "" {
+			if (pgType == "VARCHAR" || pgType == "CHAR" || pgType == "DECIMAL" || pgType == "NUMERIC") && varSize != "" {
 				varDecl += fmt.Sprintf("(%s)", varSize)
 			}
 			if varDefault != "" {
@@ -1284,8 +1284,38 @@ func mapTypeToPG(mysqlType string) string {
 		return "BIGINT"
 	case "SMALLINT":
 		return "SMALLINT"
+	case "FLOAT":
+		return "REAL"
+	case "DECIMAL", "NUMERIC":
+		// 保留精度定义，如 DECIMAL(65,30)
+		if idx := strings.Index(mysqlType, "("); idx != -1 {
+			return strings.TrimSpace(mysqlType)
+		}
+		return "DECIMAL"
+	case "VARCHAR", "CHAR":
+		// 保留长度定义，如 VARCHAR(255)
+		if idx := strings.Index(mysqlType, "("); idx != -1 {
+			return strings.TrimSpace(mysqlType)
+		}
+		return "VARCHAR"
+	case "TEXT":
+		return "TEXT"
+	case "BOOLEAN", "BOOL":
+		return "BOOLEAN"
+	case "DATE":
+		return "DATE"
+	case "TIME":
+		return "TIME"
+	case "JSON":
+		return "JSONB"
+	case "BLOB", "LONGBLOB", "MEDIUMBLOB", "BINARY", "VARBINARY":
+		return "BYTEA"
 	default:
-		return strings.TrimSpace(mysqlType)
+		// 未知类型，返回清理后的原始类型（移除括号和 UNSIGNED 等）
+		cleanType := regexp.MustCompile(`\([^)]*\)`).ReplaceAllString(mysqlType, "")
+		cleanType = regexp.MustCompile(`(?i)\s+UNSIGNED`).ReplaceAllString(cleanType, "")
+		cleanType = regexp.MustCompile(`(?i)\s+ZEROFILL`).ReplaceAllString(cleanType, "")
+		return strings.TrimSpace(cleanType)
 	}
 }
 
@@ -1472,8 +1502,15 @@ func fixIfSyntax(body string) string {
 
 // fixLoopSyntax 修复 LOOP 语句
 func fixLoopSyntax(body string) string {
+	// MySQL WHILE ... DO → PostgreSQL WHILE ... LOOP
 	body = reWhileDo.ReplaceAllString(body, "WHILE $1 LOOP")
 	body = reEndWhile.ReplaceAllString(body, "END LOOP;")
+
+	// MySQL LEAVE label → PostgreSQL EXIT label
+	body = reLeave.ReplaceAllString(body, "EXIT")
+
+	// MySQL ITERATE label → PostgreSQL CONTINUE label
+	body = reIterate.ReplaceAllString(body, "CONTINUE")
 
 	// 移除可能的多余 END LOOP
 	body = reEndLoopArgs.ReplaceAllString(body, "\nEND LOOP $1;")
