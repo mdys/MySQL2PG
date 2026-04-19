@@ -318,6 +318,31 @@ FROM case_03_floats`
 	}
 }
 
+// TestConvertViewDDL_CastUsingInConcat 测试 CAST(x USING charset) 在 CONCAT 中的转换
+func TestConvertViewDDL_CastUsingInConcat(t *testing.T) {
+	viewSQL := `SELECT
+    CONCAT(CAST(case_05_charsets.c1 USING utf8mb4), ' ', case_05_charsets.c2) AS concatenated
+FROM case_05_charsets`
+
+	ddl, err := ConvertViewDDL("view_cast_using_concat", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, " using ") {
+		t.Errorf("CAST(... USING ...) 未被移除：%s", ddl)
+	}
+	if strings.Contains(lowerDDL, " as ' '") {
+		t.Errorf("CAST 误匹配导致别名被破坏：%s", ddl)
+	}
+	if !strings.Contains(lowerDDL, "as concatenated") {
+		t.Errorf("列别名 concatenated 丢失：%s", ddl)
+	}
+}
+
 // TestConvertViewDDL_ForceIndex 测试 FORCE INDEX 移除
 func TestConvertViewDDL_ForceIndex(t *testing.T) {
 	viewSQL := `SELECT COUNT(i.col_tiny) AS total_rows
