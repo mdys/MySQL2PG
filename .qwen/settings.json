@@ -82,7 +82,22 @@
       "Bash(replacement *)",
       "Bash(pattern, *)",
       "Bash(f.write)",
-      "Bash(print)"
+      "Bash(print)",
+      "Bash(head *)",
+      "Bash(// *)",
+      "Bash(语法（mysql *)",
+      "Bash(字符集转换)",
+      "Bash(processed *)",
+      "Bash(m *)",
+      "Bash(string *)",
+      "Bash(match *)",
+      "Bash(m)",
+      "Bash(return *)",
+      "Bash(expr *)",
+      "Bash(processed, *)",
+      "Bash(\"failed to adjust limit syntax in view definition for view '%s'\", *)",
+      "Bash(tail *)",
+      "Bash(mv *)"
     ]
   },
   "$version": 3

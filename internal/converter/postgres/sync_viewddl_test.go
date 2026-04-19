@@ -343,6 +343,28 @@ FROM case_05_charsets`
 	}
 }
 
+// TestConvertViewDDL_CastUsingInQuotedConcat 测试带双引号标识符的 CAST(x USING charset) 场景
+func TestConvertViewDDL_CastUsingInQuotedConcat(t *testing.T) {
+	viewSQL := `select "case_05_charsets"."c1" as "utf8_col",
+"case_05_charsets"."c2" as "utf8mb4_col",
+concat(cast("case_05_charsets"."c1" using utf8mb4), ' ',"case_05_charsets"."c2") as "concatenated"
+from "case_05_charsets"`
+
+	ddl, err := ConvertViewDDL("view_case19_advanced_string", viewSQL)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+	lowerDDL := strings.ToLower(ddl)
+	if strings.Contains(lowerDDL, " using ") {
+		t.Errorf("仍包含 using 语法：%s", ddl)
+	}
+	if strings.Contains(lowerDDL, "as ' '") {
+		t.Errorf("出现错误的 as ' ' 片段：%s", ddl)
+	}
+}
+
 // TestConvertViewDDL_ForceIndex 测试 FORCE INDEX 移除
 func TestConvertViewDDL_ForceIndex(t *testing.T) {
 	viewSQL := `SELECT COUNT(i.col_tiny) AS total_rows
