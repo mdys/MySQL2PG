@@ -354,6 +354,19 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		return "", fmt.Errorf("failed to replace IF with CASE WHEN in view definition for view '%s'", viewName)
 	}
 
+	// 处理 CAST(x USING charset) 语法（MySQL 特有，PostgreSQL 不支持）
+	// MySQL: CAST(x USING utf8mb4) - 字符集转换
+	// PostgreSQL: 直接使用 x（PostgreSQL 默认使用 UTF-8）
+	processed = reCastUsing.ReplaceAllStringFunc(processed, func(m string) string {
+		match := reCastUsing.FindStringSubmatch(m)
+		if len(match) < 2 {
+			return m
+		}
+		expr := strings.TrimSpace(match[1])
+		// 直接返回表达式，移除 CAST ... USING 语法
+		return expr
+	})
+
 	processed = reConvert.ReplaceAllStringFunc(processed, func(m string) string {
 		match := reConvert.FindStringSubmatch(m)
 		if len(match) < 3 {
