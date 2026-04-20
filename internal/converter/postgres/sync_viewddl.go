@@ -26,7 +26,7 @@ var (
 	reSep = regexp.MustCompile(`(?i)\s*separator\s*['"]([^'"]+)['"]`)
 	// 匹配 CONVERT 函数
 	reConvert = regexp.MustCompile(`(?i)\bconvert\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
-	reCast    = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+as\s+([^)]+)\)`)
+	reCast    = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+as\s+([a-z_][a-z0-9_]*(?:\s*\(\s*[^)]+\s*\))?)\s*\)`)
 	// 匹配 CAST(x USING charset) 语法（MySQL 特有，PostgreSQL 不支持）
 	reCastUsing = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+using\s+[a-z0-9_]+\s*\)(?:\s+as\s+'[^']*')?`)
 	// 匹配 LIMIT a,b 语法
@@ -300,11 +300,11 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 			return s
 		}
 		inner := m[1]
-		
+
 		// 检查是否有 DISTINCT
 		hasDistinct := strings.Contains(strings.ToUpper(inner), "DISTINCT")
 		innerNoDistinct := reDistinct.ReplaceAllString(inner, "")
-		
+
 		// 提取 ORDER BY 子句（如果有）
 		var orderBy string
 		orderByMatch := reOrder.FindStringSubmatch(innerNoDistinct)
@@ -312,7 +312,7 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 			orderBy = strings.TrimSpace(strings.TrimPrefix(orderByMatch[0], " "))
 			innerNoDistinct = reOrder.ReplaceAllString(innerNoDistinct, "")
 		}
-		
+
 		// 解析 SEPARATOR
 		sepM := reSep.FindStringSubmatch(innerNoDistinct)
 		sep := ","
@@ -320,9 +320,9 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 			sep = sepM[1]
 			innerNoDistinct = reSep.ReplaceAllString(innerNoDistinct, "")
 		}
-		
+
 		expr := strings.TrimSpace(innerNoDistinct)
-		
+
 		// 构建 PostgreSQL string_agg 表达式
 		var sb strings.Builder
 		sb.WriteString("string_agg(")
@@ -341,7 +341,7 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		sb.WriteString(", '")
 		sb.WriteString(sep)
 		sb.WriteString("')")
-		
+
 		return sb.String()
 	})
 	if processed == "" {
