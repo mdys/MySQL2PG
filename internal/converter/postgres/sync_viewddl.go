@@ -848,13 +848,45 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		return "", fmt.Errorf("failed to generate CREATE VIEW statement for view '%s'", viewName)
 	}
 
-	// 将整个语句转换为小写，确保符合要求
-	createStmt = strings.ToLower(createStmt)
+	// 将 SQL 关键字和标识符规范化为小写，但保留单引号内字面量内容
+	createStmt = lowerSQLPreservingSingleQuotedLiterals(createStmt)
 	if createStmt == "" {
 		return "", fmt.Errorf("failed to convert CREATE VIEW statement to lowercase for view '%s'", viewName)
 	}
 
 	return createStmt, nil
+}
+
+// lowerSQLPreservingSingleQuotedLiterals 将 SQL 在单引号字面量外转为小写。
+func lowerSQLPreservingSingleQuotedLiterals(sql string) string {
+	if sql == "" {
+		return ""
+	}
+	var out strings.Builder
+	out.Grow(len(sql))
+	inSingleQuoted := false
+	for i := 0; i < len(sql); i++ {
+		ch := sql[i]
+		if ch == '\'' {
+			out.WriteByte(ch)
+			if inSingleQuoted && i+1 < len(sql) && sql[i+1] == '\'' {
+				out.WriteByte(sql[i+1])
+				i++
+				continue
+			}
+			inSingleQuoted = !inSingleQuoted
+			continue
+		}
+		if inSingleQuoted {
+			out.WriteByte(ch)
+			continue
+		}
+		if ch >= 'A' && ch <= 'Z' {
+			ch = ch + ('a' - 'A')
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
 }
 
 // quoteIdentifier 始终用双引号引用标识符，且对内部双引号做转义
