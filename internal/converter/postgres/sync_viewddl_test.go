@@ -442,3 +442,47 @@ FROM case_09_datetime`
 		t.Errorf("TO_DAYS 未转换为 extract epoch：%s", ddl)
 	}
 }
+
+// TestConvertViewDDL_FullView19WithCastUsing 测试完整的 view_case19 转换（包含 MySQL 可能返回的 CAST USING 语法）
+func TestConvertViewDDL_FullView19WithCastUsing(t *testing.T) {
+	// 模拟 MySQL information_schema.views.view_definition 可能返回的内容
+	// MySQL 可能会在视图定义中自动添加 CAST(x USING charset) 语法
+	mysqlViewDefinition := `select 
+    c1 as utf8_col,
+    c2 as utf8mb4_col,
+    c3 as latin1_col,
+    c4 as utf16_col,
+    c5 as charset_utf8mb4,
+    c6 as charset_latin1,
+    upper(c1) as upper_utf8,
+    lower(c2) as lower_utf8mb4,
+    trim(c3) as trimmed_latin1,
+    length(c1) as length_utf8,
+    char_length(c2) as char_length_utf8mb4,
+    concat(cast(c1 using utf8mb4) as ' ',c2) as concatenated
+from case_05_charsets`
+
+	ddl, err := ConvertViewDDL("view_case19_advanced_string", mysqlViewDefinition)
+	if err != nil {
+		t.Fatalf("ConvertViewDDL 返回错误：%v", err)
+	}
+
+	t.Logf("转换结果：%s", ddl)
+
+	lowerDDL := strings.ToLower(ddl)
+	
+	// 检查不包含 USING 语法
+	if strings.Contains(lowerDDL, " using ") {
+		t.Errorf("仍包含 using 语法：%s", ddl)
+	}
+	
+	// 检查不包含 as ' ' 语法（这是错误的语法）
+	if strings.Contains(lowerDDL, "as ' '") {
+		t.Errorf("包含错误的 as ' ' 语法：%s", ddl)
+	}
+	
+	// 检查 concat 被转换为 || 或者至少不包含 cast
+	if strings.Contains(lowerDDL, "concat(") && strings.Contains(lowerDDL, "using") {
+		t.Errorf("concat 中包含 using：%s", ddl)
+	}
+}

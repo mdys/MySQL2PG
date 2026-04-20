@@ -28,7 +28,7 @@ var (
 	reConvert = regexp.MustCompile(`(?i)\bconvert\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	reCast    = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+as\s+([a-z_][a-z0-9_]*(?:\s*\(\s*[^)]+\s*\))?)\s*\)`)
 	// 匹配 CAST(x USING charset) 语法（MySQL 特有，PostgreSQL 不支持）
-	reCastUsing = regexp.MustCompile(`(?i)\bcast\s*\(\s*(.+?)\s+using\s+[a-z0-9_]+\s*\)`)
+	reCastUsing = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+using\s+[a-z0-9_]+\s*\)(?:\s+as\s+'[^']*')?`)
 	// 匹配 LIMIT a,b 语法
 	reLimitOffset = regexp.MustCompile(`(?i)\blimit\s+(\d+)\s*,\s*(\d+)`)
 	// 匹配 JSON_OBJECT 函数
@@ -354,7 +354,9 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 		return "", fmt.Errorf("failed to replace IF with CASE WHEN in view definition for view '%s'", viewName)
 	}
 
-	// 先处理 CAST(x USING charset)，避免后续 CAST(x AS y) 规则误匹配到别名/字符串字面量
+	// 处理 CAST(x USING charset) 语法（MySQL 特有，PostgreSQL 不支持）
+	// MySQL: CAST(x USING utf8mb4) - 字符集转换
+	// PostgreSQL: 直接使用 x（PostgreSQL 默认使用 UTF-8）
 	processed = reCastUsing.ReplaceAllStringFunc(processed, func(m string) string {
 		match := reCastUsing.FindStringSubmatch(m)
 		if len(match) < 2 {
