@@ -101,7 +101,8 @@
       "Bash(ddl)",
       "Bash(t.errorf)",
       "Bash(或者至少不包含 *)",
-      "Bash(strings.contains)"
+      "Bash(strings.contains)",
+      "Bash(od *)"
     ]
   },
   "$version": 3
