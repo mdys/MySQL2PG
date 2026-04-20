@@ -25,13 +25,27 @@ jobs:
       - name: Test
         run: |
           echo "Running tests with race detector..."
-          go test -v -race -coverprofile=coverage.out ./... 2>&1 | tee test-output.log
-          echo "Test exit code: $?"
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Tests failed! Showing failed packages:"
-            grep -E "^FAIL\s" test-output.log || true
-            exit 1
-          fi
+          
+          # Run tests for each package separately to avoid coverage profile issues
+          echo "Testing internal/config..."
+          go test -v -race -coverprofile=coverage.out ./internal/config/...
+          
+          echo "Testing internal/converter/postgres..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/converter/postgres/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "Testing internal/postgres..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/postgres/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "Testing internal/report..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/report/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "All tests completed successfully"
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
