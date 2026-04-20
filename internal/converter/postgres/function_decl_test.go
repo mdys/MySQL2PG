@@ -136,6 +136,49 @@ END`
 	}
 }
 
+// TestFunctionConcatWsWithCommaSeparator 测试 CONCAT_WS 在分隔符为逗号时的转换
+func TestFunctionConcatWsWithCommaSeparator(t *testing.T) {
+	mysqlDDL := `CREATE FUNCTION test_concat_ws_cursor(param_limit INT) RETURNS TEXT
+READS SQL DATA
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE v_result TEXT DEFAULT '';
+    DECLARE cur_complex CURSOR FOR
+        SELECT CONCAT_WS(',', t1.id, t1.event_date, t2.id) FROM case_97_partition_range_columns t1
+        LEFT JOIN case_88_year_conversion t2 ON t1.id = t2.id LIMIT param_limit;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    OPEN cur_complex;
+    read_loop: LOOP
+        FETCH cur_complex INTO v_result;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+    END LOOP;
+    CLOSE cur_complex;
+    RETURN v_result;
+END`
+
+	result, err := ConvertFunctionDDL(mysql.FunctionInfo{
+		Name: "test_concat_ws_cursor",
+		DDL:  mysqlDDL,
+	})
+	if err != nil {
+		t.Fatalf("转换失败：%v", err)
+	}
+
+	lowerResult := strings.ToLower(result)
+	if strings.Contains(lowerResult, "concat_ws(") {
+		t.Fatalf("CONCAT_WS 未被转换：%s", result)
+	}
+	if strings.Contains(lowerResult, "array_to_string(array[',") {
+		t.Fatalf("CONCAT_WS 发生参数错位：%s", result)
+	}
+	if !strings.Contains(lowerResult, "array_to_string(array[") {
+		t.Fatalf("缺少 ARRAY_TO_STRING 转换结果：%s", result)
+	}
+}
+
 // 辅助函数：打印转换结果的调试信息
 func debugConversionResult(t *testing.T, name, ddl string) {
 	result, err := ConvertFunctionDDL(mysql.FunctionInfo{

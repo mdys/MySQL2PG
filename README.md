@@ -41,6 +41,9 @@ Start
  ├─▶ [Step 2] Convert table structures (tableddl: true)
  │     ├─ Intelligent field type mapping (e.g., tinyint(1) → BOOLEAN)
  │     ├─ lowercase_columns/lowercase_tables controls field/table name casing
+ │     ├─ Extract primary key columns for MPP distribution key
+ │     ├─ If MPP enabled (conversion.mpp.enabled=true):
+ │     │   └─ Add DISTRIBUTED BY (pk_col1, pk_col2, ...) clause
  │     └─ Create tables in PostgreSQL (skip_existing_tables controls skipping)
  │
  ├─▶ [Step 3] Convert views (views: true)
@@ -55,6 +58,9 @@ Start
  │     └─ Automatically disable foreign key constraints and indexes for performance
  │
  ├─▶ [Step 5] Convert indexes (indexes: true)
+ │     ├─ If MPP enabled (Greenplum):
+ │     │   ├─ Skip UNIQUE INDEX creation (distribution keys ensure uniqueness)
+ │     │   └─ Apply ALTER TABLE ... SET DISTRIBUTED BY for tables with primary keys
  │     ├─ Primary keys, unique indexes, normal indexes, full-text indexes → Auto rebuild
  │     └─ Batch processing (max_indexes_per_batch=20)
  │
@@ -218,11 +224,11 @@ conversion:
   options:
     view: true
     functions: true
-    
+
     # Skip specific views (e.g., complex reporting views)
     exclude_use_view_list: true
     exclude_view_list: [v_complex_report, v_temp_stats, v_old_dashboard]
-    
+
     # Skip specific functions (e.g., deprecated or MySQL-only functions)
     exclude_use_function_list: true
     exclude_function_list: [func_calc_commission, func_get_user_level, func_deprecated]
@@ -233,6 +239,62 @@ conversion:
 2. **Temporary Views**: Skip temporary or development-only views that aren't needed in production.
 3. **Deprecated Functions**: Skip old functions that are no longer used or have PostgreSQL-native alternatives.
 4. **MySQL-Specific Functions**: Skip functions that rely on MySQL-specific behavior not supported in PostgreSQL.
+
+### MPP Distributed Database Support
+
+- **Description**: Provides support for MPP (Massively Parallel Processing) distributed databases like Greenplum and YugabyteDB.
+- **Configuration**:
+  - `conversion.mpp.enabled: true` - Enable MPP mode (creates UNIQUE INDEX and DISTRIBUTED BY clauses).
+  - `conversion.mpp.database: auto` - MPP database type: `greenplum`, `yugabyte`, or `auto` (auto-detect).
+- **Features**:
+  - **Distribution Key Selection**: Automatically uses primary key columns as distribution keys.
+  - **DISTRIBUTED BY Clause**: Adds `ALTER TABLE schema.table SET DISTRIBUTED BY (col1, col2, ...)` after table creation.
+  - **UNIQUE INDEX Handling**: On Greenplum, skips UNIQUE INDEX creation (distribution keys ensure uniqueness).
+  - **Auto Detection**: Automatically detects MPP database type by querying PostgreSQL version/extensions.
+- **Syntax Example**:
+  ```sql
+  -- MySQL primary key
+  PRIMARY KEY (id, user_id)
+  
+  -- PostgreSQL with MPP
+  CREATE TABLE "users" ("id" BIGINT, "user_id" BIGINT, ...);
+  ALTER TABLE public.users SET DISTRIBUTED BY (id, user_id);
+  ```
+- **Use Cases**:
+  - Migrating MySQL tables to Greenplum distributed tables.
+  - Migrating to YugabyteDB with proper distribution key configuration.
+  - Ensuring even data distribution across MPP segments/nodes.
+
+### HTML Migration Reports
+
+- **Description**: Generates visual HTML reports from conversion logs with a dark terminal aesthetic.
+- **Command**:
+  ```bash
+  # Basic usage
+  ./mysql2pg report -l conversion.log
+  
+  # With error log
+  ./mysql2pg report -l conversion.log -e errors.log
+  
+  # Custom output path
+  ./mysql2pg report -l conversion.log -o my-report.html
+  ```
+- **Features**:
+  - **Single-file HTML**: Inline CSS, no external dependencies, opens directly in browser.
+  - **Dark Terminal Design**: JetBrains Mono font, DM Sans body, neon accent colors (cyan, blue, green, red, amber, purple).
+  - **Summary Stat Cards**: Tables, rows, views, indexes, functions, errors count.
+  - **Performance Bar Charts**: Stage-wise duration visualization with progress bars.
+  - **Table Details**: Per-table status with badges (已转换，已存在，数据一致，数据不一致，空表).
+  - **Error/Warning Sections**: Deduplicated error messages and warnings linked to tables.
+  - **Inconsistency Report**: Tables with row count mismatches (MySQL vs PostgreSQL).
+  - **Progress Tracking**: Shows migration completion status (complete/in-progress).
+- **Log Patterns Parsed**:
+  - Table conversion success/skip messages
+  - Paginated data sync completion
+  - Stage summary tables (written to both console and log file)
+  - Inconsistent table statistics
+  - Version info, warnings, errors
+- **Deduplication**: All entries deduplicated by table name to prevent double-counting.
 
 ### Connection Pool Optimization
 
@@ -379,6 +441,15 @@ View conversion accuracy reaches 98%, supporting batch conversion (10 per batch)
 - **Sections**: Summary stat cards, performance bar charts, table details, inconsistencies, warnings, errors
 - **Console output**: Stage summary tables and inconsistent table tables are now written to both console AND log files for report parsing
 
+### 14. MPP Distributed Database Support
+
+- **Greenplum/YugabyteDB Support**: Automatically adds `DISTRIBUTED BY` clause for MPP databases
+- **Smart Distribution Key**: Uses primary key columns as distribution keys by default
+- **Auto Detection**: Automatically detects MPP database type (greenplum/yugabyte/auto)
+- **UNIQUE INDEX Handling**: Skips UNIQUE INDEX creation on Greenplum (uses distribution keys instead)
+- **Configuration**: Enable via `conversion.mpp.enabled: true`
+- **Distribution Syntax**: `ALTER TABLE schema.table SET DISTRIBUTED BY (col1, col2, ...)`
+
 ### 11. Configurable Connection Pools
 
 - Custom settings for MySQL/PostgreSQL pools.
@@ -474,6 +545,11 @@ conversion:
     # Function exclusion
     exclude_use_function_list: false  # Enable function exclusion list
     exclude_function_list: [func1, func2]  # Functions to skip
+
+  # MPP Distributed Database Support
+  mpp:
+    enabled: false              # Enable MPP mode (creates UNIQUE INDEX and DISTRIBUTED BY clauses)
+    database: auto              # MPP database type: greenplum/yugabyte/auto (auto-detect)
 
   limits:
     concurrency: 10
