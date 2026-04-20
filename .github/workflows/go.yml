@@ -23,7 +23,15 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: |
+          echo "Running tests with race detector..."
+          go test -v -race -coverprofile=coverage.out ./... 2>&1 | tee test-output.log
+          echo "Test exit code: $?"
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Tests failed! Showing failed packages:"
+            grep -E "^FAIL\s" test-output.log || true
+            exit 1
+          fi
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
