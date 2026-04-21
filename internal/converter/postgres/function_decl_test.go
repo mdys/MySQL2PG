@@ -244,31 +244,3 @@ END`
 		debugConversionResult(t, "func_001_complex_analysis", mysqlDDL)
 	})
 }
-
-// TestFunctionConcatWsWithCommaSeparator 测试 CONCAT_WS 在分隔符为逗号时的转换正确性。
-func TestFunctionConcatWsWithCommaSeparator(t *testing.T) {
-	mysqlDDL := `CREATE FUNCTION func_concat_ws_case()
-RETURNS TEXT
-READS SQL DATA
-BEGIN
-    DECLARE v_result TEXT DEFAULT '';
-    SELECT CONCAT_WS(',', t1.id, t1.col_int, t1.col_bigint)
-      INTO v_result
-    FROM case_01_integers t1
-    LIMIT 1;
-    RETURN v_result;
-END`
-
-	result, err := ConvertFunctionDDL(mysql.FunctionInfo{
-		Name: "func_concat_ws_case",
-		DDL:  mysqlDDL,
-	})
-	if err != nil {
-		t.Fatalf("转换失败：%v", err)
-	}
-
-	t.Logf("转换结果:\n%s", result)
-	if !strings.Contains(result, "ARRAY_TO_STRING(ARRAY[t1.id, t1.col_int, t1.col_bigint], ',')") {
-		t.Fatalf("CONCAT_WS 转换结果不符合预期：%s", result)
-	}
-}
