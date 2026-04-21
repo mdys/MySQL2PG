@@ -26,7 +26,7 @@ var (
 	reUnixTime2    = regexp.MustCompile(`(?i)\bUNIX_TIMESTAMP\s*\(([^)]+?)\)`)
 	reFromUnix     = regexp.MustCompile(`(?i)\bFROM_UNIXTIME\s*\(([^)]+?)\)`)
 	reDateFormat   = regexp.MustCompile(`(?i)\bDATE_FORMAT\s*\(([^,]+?),\s*'([^']+?)'\)`)
-	reConcatWs     = regexp.MustCompile(`(?i)\bCONCAT_WS\s*\(([^,]+?),\s*([^)]+?)\)`)
+	reConcatWs     = regexp.MustCompile(`(?i)\bCONCAT_WS\s*\(`)
 	reSubstringIdx = regexp.MustCompile(`(?i)\bSUBSTRING_INDEX\s*\(([^,]+?),\s*'([^']+?)',\s*(-?\d+)\)`)
 	reLeft         = regexp.MustCompile(`(?i)\bLEFT\s*\(([^,]+?),\s*(\d+)\)`)
 	reRight        = regexp.MustCompile(`(?i)\bRIGHT\s*\(([^,]+?),\s*(\d+)\)`)
@@ -538,16 +538,19 @@ func (c *FunctionConverter) convertBuiltinFunctions() {
 	// 4. GROUP_CONCAT 处理 (必须在 CONCAT 之前)
 	body = c.processGroupConcat(body)
 
-	// 5. CONCAT 处理
+	// 5. CONCAT_WS 处理（必须在 CONCAT 之前，避免参数被误切分）
+	body = c.processConcatWs(body)
+
+	// 6. CONCAT 处理
 	body = c.processConcat(body)
 
-	// 5.1 DATEDIFF 处理
+	// 6.1 DATEDIFF 处理
 	body = c.processDateDiff(body)
 
-	// 5.2 IF 处理 (必须处理嵌套逗号)
+	// 6.2 IF 处理 (必须处理嵌套逗号)
 	body = c.processIfFunction(body)
 
-	// 6. 字符串和数学函数替换
+	// 7. 字符串和数学函数替换
 	replacements := map[*regexp.Regexp]string{
 		// reCharLength:   "LENGTH($1)", // PG supports char_length
 		reRegexp:       "~",
@@ -559,7 +562,6 @@ func (c *FunctionConverter) convertBuiltinFunctions() {
 		reUnixTime2:    "EXTRACT(EPOCH FROM $1)",
 		reFromUnix:     "TO_TIMESTAMP($1)",
 		reDateFormat:   "TO_CHAR($1, '$2')",
-		reConcatWs:     "ARRAY_TO_STRING(ARRAY[$2], $1)",
 		reSubstringIdx: "SPLIT_PART($1, '$2', $3)",
 		// reLeft:         "LEFT($1, $2)", // PG supports LEFT
 		// reRight:        "RIGHT($1, $2)", // PG supports RIGHT
@@ -762,6 +764,134 @@ func (c *FunctionConverter) processGroupConcat(body string) string {
 		body = strings.Replace(body, fullMatch, newExpr, 1)
 	}
 	return body
+}
+
+// processConcatWs 处理 CONCAT_WS 函数并保留分隔符与参数顺序。
+func (c *FunctionConverter) processConcatWs(body string) string {
+	for {
+		loc := reConcatWs.FindStringIndex(body)
+		if loc == nil {
+			break
+		}
+		startIdx := loc[0]
+		paramStart := loc[1] - 1 // 指向 '('
+
+		depth := 0
+		paramEnd := -1
+		inString := false
+		stringChar := byte(0)
+		for i := paramStart + 1; i < len(body); i++ {
+			ch := body[i]
+			if ch == '\'' || ch == '"' {
+				if !inString {
+					inString = true
+					stringChar = ch
+				} else if ch == stringChar {
+					if ch == '\'' && i+1 < len(body) && body[i+1] == '\'' {
+						i++
+						continue
+					}
+					inString = false
+					stringChar = 0
+				}
+			}
+			if inString {
+				continue
+			}
+			if ch == '(' {
+				depth++
+				continue
+			}
+			if ch == ')' {
+				if depth == 0 {
+					paramEnd = i
+					break
+				}
+				depth--
+			}
+		}
+		if paramEnd == -1 {
+			break
+		}
+
+		fullMatch := body[startIdx : paramEnd+1]
+		paramsStr := body[paramStart+1 : paramEnd]
+		args := splitArgsWithContext(paramsStr)
+		if len(args) < 2 {
+			break
+		}
+
+		separator := strings.TrimSpace(args[0])
+		exprs := make([]string, 0, len(args)-1)
+		for _, arg := range args[1:] {
+			trimmed := strings.TrimSpace(arg)
+			if trimmed != "" {
+				exprs = append(exprs, trimmed)
+			}
+		}
+		if len(exprs) == 0 {
+			break
+		}
+
+		newExpr := fmt.Sprintf("ARRAY_TO_STRING(ARRAY[%s], %s)", strings.Join(exprs, ", "), separator)
+		body = strings.Replace(body, fullMatch, newExpr, 1)
+	}
+	return body
+}
+
+// splitArgsWithContext 按顶层逗号拆分参数并正确处理引号和嵌套括号。
+func splitArgsWithContext(paramsStr string) []string {
+	var args []string
+	var current strings.Builder
+	depth := 0
+	inString := false
+	stringChar := byte(0)
+	for i := 0; i < len(paramsStr); i++ {
+		ch := paramsStr[i]
+		if ch == '\'' || ch == '"' {
+			current.WriteByte(ch)
+			if !inString {
+				inString = true
+				stringChar = ch
+				continue
+			}
+			if ch == stringChar {
+				if ch == '\'' && i+1 < len(paramsStr) && paramsStr[i+1] == '\'' {
+					current.WriteByte(paramsStr[i+1])
+					i++
+					continue
+				}
+				inString = false
+				stringChar = 0
+			}
+			continue
+		}
+		if inString {
+			current.WriteByte(ch)
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+			current.WriteByte(ch)
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			current.WriteByte(ch)
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(current.String()))
+				current.Reset()
+				continue
+			}
+			current.WriteByte(ch)
+		default:
+			current.WriteByte(ch)
+		}
+	}
+	args = append(args, strings.TrimSpace(current.String()))
+	return args
 }
 
 // processDateDiff 处理 DATEDIFF 函数

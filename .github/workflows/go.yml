@@ -23,7 +23,29 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: |
+          echo "Running tests with race detector..."
+          
+          # Run tests for each package separately to avoid coverage profile issues
+          echo "Testing internal/config..."
+          go test -v -race -coverprofile=coverage.out ./internal/config/...
+          
+          echo "Testing internal/converter/postgres..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/converter/postgres/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "Testing internal/postgres..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/postgres/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "Testing internal/report..."
+          go test -v -race -coverprofile=coverage.out.tmp ./internal/report/...
+          cat coverage.out.tmp >> coverage.out
+          rm coverage.out.tmp
+          
+          echo "All tests completed successfully"
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4

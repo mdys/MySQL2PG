@@ -84,8 +84,8 @@ FROM case_05_charsets`
 
 	t.Logf("转换结果：%s", ddl)
 
-	// 检查转换结果（SQL 会被转为小写）
-	if !strings.Contains(ddl, "~ '^[a-za-z]+$'") {
+	// 检查转换结果：操作符要转换且正则字面量应保持原语义
+	if !strings.Contains(ddl, "~ '^[a-zA-Z]+$'") {
 		t.Errorf("REGEXP_LIKE(c1, '^[a-zA-Z]+$') 未正确转换为 ~ 操作符：%s", ddl)
 	}
 	if !strings.Contains(ddl, "~ '^[0-9]+$'") {
@@ -116,11 +116,11 @@ FROM users`
 
 	t.Logf("转换结果：%s", ddl)
 
-	// SQL 会被转为小写，检查小写形式
-	if !strings.Contains(ddl, "name ~ '^[a-z][a-z]+'") {
+	// 检查正则内容保持不变，避免大小写语义损坏
+	if !strings.Contains(ddl, "name ~ '^[A-Z][a-z]+'") {
 		t.Errorf("REGEXP_LIKE(name, ...) 转换失败：%s", ddl)
 	}
-	if !strings.Contains(ddl, "email ~ '^[a-za-z0-9._%+-]+@[a-za-z0-9.-]+") {
+	if !strings.Contains(ddl, "email ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+") {
 		t.Errorf("REGEXP_LIKE(email, ...) 转换失败：%s", ddl)
 	}
 }
@@ -283,13 +283,17 @@ FROM case_05_charsets`
 
 	t.Logf("转换结果：%s", ddl)
 
-	// 检查 INSTR 转换（SQL 会被转为小写）
+	// 检查 INSTR 转换
 	if !strings.Contains(ddl, "strpos(") {
 		t.Errorf("INSTR 未转换为 STRPOS：%s", ddl)
 	}
-	// 检查 RLIKE 转换（SQL 会被转为小写）
+	// 检查 RLIKE 转换
 	if !strings.Contains(ddl, " ~ '") {
 		t.Errorf("RLIKE 未转换为 ~ 操作符：%s", ddl)
+	}
+	// 检查正则字面量内容保持不变，避免大小写语义被破坏
+	if !strings.Contains(ddl, "'^[A-Za-z]+$'") {
+		t.Errorf("RLIKE 正则字面量被错误改写：%s", ddl)
 	}
 }
 
@@ -470,17 +474,17 @@ from case_05_charsets`
 	t.Logf("转换结果：%s", ddl)
 
 	lowerDDL := strings.ToLower(ddl)
-	
+
 	// 检查不包含 USING 语法
 	if strings.Contains(lowerDDL, " using ") {
 		t.Errorf("仍包含 using 语法：%s", ddl)
 	}
-	
+
 	// 检查不包含 as ' ' 语法（这是错误的语法）
 	if strings.Contains(lowerDDL, "as ' '") {
 		t.Errorf("包含错误的 as ' ' 语法：%s", ddl)
 	}
-	
+
 	// 检查 concat 被转换为 || 或者至少不包含 cast
 	if strings.Contains(lowerDDL, "concat(") && strings.Contains(lowerDDL, "using") {
 		t.Errorf("concat 中包含 using：%s", ddl)
