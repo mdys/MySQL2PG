@@ -184,6 +184,12 @@ var (
 	reInstr = regexp.MustCompile(`(?i)\binstr\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 RLIKE 操作符 (MySQL 8.0+) - 支持括号内的情况
 	reRLike = regexp.MustCompile(`(?i)(\([^)]+)\s+rlike\s+'([^']+)'`)
+	// 匹配 REGEXP_INSTR 函数 (MySQL 8.0+) - 改进版本，正确处理括号内的内容
+	reRegexpInstr = regexp.MustCompile(`(?i)\bregexp_instr\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 REGEXP_SUBSTR 函数 (MySQL 8.0+) - 改进版本，正确处理括号内的内容
+	reRegexpSubstr = regexp.MustCompile(`(?i)\bregexp_substr\s*\(\s*([^,]+)\s*,\s*([^)]+)\)`)
+	// 匹配 REGEXP_REPLACE 函数 (MySQL 8.0+) - 三个参数
+	reRegexpReplace = regexp.MustCompile(`(?i)\bregexp_replace\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)`)
 	// 匹配 CAST(x AS SIGNED) 函数
 	reCastSigned = regexp.MustCompile(`(?i)\bcast\s*\(\s*([^)]+)\s+as\s+signed\)`)
 	// 匹配 CAST(x AS CHAR) 函数
@@ -227,6 +233,24 @@ func ConvertViewDDL(viewName string, viewDefinition string) (string, error) {
 	processed = replaceRegexpLikeExpressions(processed)
 	if processed == "" {
 		return "", fmt.Errorf("failed to replace REGEXP_LIKE in view definition for view '%s'", viewName)
+	}
+
+	// 将 REGEXP_INSTR(str, pattern) 转换为 POSITION(substring in str) 或 regexp_match (PostgreSQL)
+	processed = replaceRegexpInstrExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace REGEXP_INSTR in view definition for view '%s'", viewName)
+	}
+
+	// 将 REGEXP_SUBSTR(str, pattern) 转换为 SUBSTRING(str from pattern) (PostgreSQL)
+	processed = replaceRegexpSubstrExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace REGEXP_SUBSTR in view definition for view '%s'", viewName)
+	}
+
+	// 将 REGEXP_REPLACE(str, pattern, repl) 转换为 regexp_replace(str, pattern, repl) (PostgreSQL)
+	processed = replaceRegexpReplaceExpressions(processed)
+	if processed == "" {
+		return "", fmt.Errorf("failed to replace REGEXP_REPLACE in view definition for view '%s'", viewName)
 	}
 
 	// 将 LOCATE(substr, str) 转换为 STRPOS(str, substr) (PostgreSQL)
@@ -1396,6 +1420,50 @@ func replaceInstrExpressions(s string) string {
 // PostgreSQL ~: 区分大小写的正则匹配
 func replaceRLikeExpressions(s string) string {
 	return reRLike.ReplaceAllString(s, "($1 ~ '$2')")
+}
+
+// replaceRegexpInstrExpressions 将 REGEXP_INSTR(str, pattern[, pos]) 转换为 STRPOS 或 regexp_instr
+// MySQL REGEXP_INSTR: 返回正则表达式匹配的位置（从 1 开始）
+// PostgreSQL: 使用 STRPOS + SUBSTRING 或自定义函数
+// 注意：PostgreSQL 没有直接等价的函数，这里使用 CASE WHEN ~ THEN 1 ELSE 0 模拟
+func replaceRegexpInstrExpressions(s string) string {
+	return reRegexpInstr.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reRegexpInstr.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		str := strings.TrimSpace(submatch[1])
+		pattern := strings.TrimSpace(submatch[2])
+		
+		// PostgreSQL 方案：使用正则匹配返回布尔值，转换为 1/0
+		// pattern 已经包含引号，不需要额外添加
+		return fmt.Sprintf("(CASE WHEN %s ~ %s THEN 1 ELSE 0 END)", str, pattern)
+	})
+}
+
+// replaceRegexpSubstrExpressions 将 REGEXP_SUBSTR(str, pattern[, pos]) 转换为 SUBSTRING
+// MySQL REGEXP_SUBSTR: 返回正则表达式匹配的子串
+// PostgreSQL SUBSTRING: SUBSTRING(str FROM pattern)
+func replaceRegexpSubstrExpressions(s string) string {
+	return reRegexpSubstr.ReplaceAllStringFunc(s, func(match string) string {
+		submatch := reRegexpSubstr.FindStringSubmatch(match)
+		if len(submatch) < 3 {
+			return match
+		}
+		str := strings.TrimSpace(submatch[1])
+		pattern := strings.TrimSpace(submatch[2])
+		
+		// PostgreSQL: SUBSTRING(str FROM pattern)
+		// pattern 已经包含引号，不需要额外添加
+		return fmt.Sprintf("SUBSTRING(%s FROM %s)", str, pattern)
+	})
+}
+
+// replaceRegexpReplaceExpressions 将 REGEXP_REPLACE(str, pattern, repl) 转换为 regexp_replace
+// MySQL REGEXP_REPLACE: 使用正则表达式替换
+// PostgreSQL regexp_replace: 语法相同，直接转换
+func replaceRegexpReplaceExpressions(s string) string {
+	return reRegexpReplace.ReplaceAllString(s, "regexp_replace($1, $2, $3)")
 }
 
 // replaceCastSignedExpressions 将 CAST(x AS SIGNED) 转换为 CAST(x AS INTEGER)

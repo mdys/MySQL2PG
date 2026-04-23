@@ -490,3 +490,132 @@ from case_05_charsets`
 		t.Errorf("concat 中包含 using：%s", ddl)
 	}
 }
+
+// ==================== TDD: 提高 convertMySQLOrderByToPG 覆盖率 ====================
+
+// Test_convertMySQLOrderByToPG_Comprehensive 测试 ORDER BY 转换的全面场景
+func Test_convertMySQLOrderByToPG_Comprehensive(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		output string
+	}{
+		{"simple_asc", "col ASC", "col ASC"},
+		{"simple_desc", "col DESC", "col DESC"},
+		{"backtick", "`col`", "\"col\""},
+		{"leading_spaces", "  col ASC", "col ASC"},
+		{"trailing_spaces", "col ASC  ", "col ASC"},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertMySQLOrderByToPG(tt.input)
+			if result != tt.output {
+				t.Errorf("convertMySQLOrderByToPG(%q) = %q, want %q", tt.input, result, tt.output)
+			}
+		})
+	}
+}
+
+// ==================== TDD: 提高 replaceCastCharExpressions 覆盖率 ====================
+
+// Test_replaceCastCharExpressions 测试 CAST(x AS CHAR) 转换
+func Test_replaceCastCharExpressions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple", "SELECT CAST(col AS CHAR)", "CAST(col AS TEXT)"},
+		{"with_length", "SELECT CAST(col AS CHAR(100))", "CAST(col AS TEXT)"},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := replaceCastCharExpressions(tt.input)
+			if !strings.Contains(result, tt.expected) {
+				t.Errorf("replaceCastCharExpressions(%q) = %q, want to contain %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== TDD: 提高 replaceCastSignedExpressions 覆盖率 ====================
+
+// Test_replaceCastSignedExpressions 测试 CAST(x AS SIGNED) 转换
+func Test_replaceCastSignedExpressions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple", "SELECT CAST(col AS SIGNED)", "CAST(col AS INTEGER)"},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := replaceCastSignedExpressions(tt.input)
+			if !strings.Contains(result, tt.expected) {
+				t.Errorf("replaceCastSignedExpressions(%q) = %q, want to contain %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ==================== TDD: 提高 replaceJSON* 函数覆盖率 ====================
+
+// Test_replaceJSONInsertView 测试 JSON_INSERT 转换
+func Test_replaceJSONInsertView(t *testing.T) {
+	result := replaceJSONInsertView("SELECT JSON_INSERT(data, '$.key', 'value')")
+	if !strings.Contains(result, "JSONB_SET") {
+		t.Errorf("replaceJSONInsertView() = %q, want to contain JSONB_SET", result)
+	}
+}
+
+// Test_replaceJSONReplaceView 测试 JSON_REPLACE 转换
+func Test_replaceJSONReplaceView(t *testing.T) {
+	result := replaceJSONReplaceView("SELECT JSON_REPLACE(data, '$.key', 'value')")
+	if !strings.Contains(result, "JSONB_SET") {
+		t.Errorf("replaceJSONReplaceView() = %q, want to contain JSONB_SET", result)
+	}
+}
+
+// Test_replaceJSONSetView 测试 JSON_SET 转换
+func Test_replaceJSONSetView(t *testing.T) {
+	result := replaceJSONSetView("SELECT JSON_SET(data, '$.key', 'value')")
+	if !strings.Contains(result, "JSONB_SET") {
+		t.Errorf("replaceJSONSetView() = %q, want to contain JSONB_SET", result)
+	}
+}
+
+// Test_replaceJSONRemoveView 测试 JSON_REMOVE 转换
+func Test_replaceJSONRemoveView(t *testing.T) {
+	result := replaceJSONRemoveView("SELECT JSON_REMOVE(data, '$.key')")
+	if !strings.Contains(result, "-") {
+		t.Errorf("replaceJSONRemoveView() = %q, want to contain -", result)
+	}
+}
+
+// Test_replaceJSONMergePatchView 测试 JSON_MERGE_PATCH 转换
+func Test_replaceJSONMergePatchView(t *testing.T) {
+	result := replaceJSONMergePatchView("SELECT JSON_MERGE_PATCH(data1, data2)")
+	if !strings.Contains(result, "||") {
+		t.Errorf("replaceJSONMergePatchView() = %q, want to contain ||", result)
+	}
+}
+
+// Test_replaceJSONKeysView 测试 JSON_KEYS 转换
+func Test_replaceJSONKeysView(t *testing.T) {
+	result := replaceJSONKeysView("SELECT JSON_KEYS(data)")
+	if !strings.Contains(result, "JSONB_OBJECT_KEYS") {
+		t.Errorf("replaceJSONKeysView() = %q, want to contain JSONB_OBJECT_KEYS", result)
+	}
+}
+
+// Test_replaceJSONLengthView 测试 JSON_LENGTH 转换
+func Test_replaceJSONLengthView(t *testing.T) {
+	result := replaceJSONLengthView("SELECT JSON_LENGTH(arr)")
+	if !strings.Contains(result, "JSONB_ARRAY_LENGTH") {
+		t.Errorf("replaceJSONLengthView() = %q, want to contain JSONB_ARRAY_LENGTH", result)
+	}
+}
