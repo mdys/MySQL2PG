@@ -205,6 +205,46 @@ func (c *Connection) GetTableDataWithPagination(tableName string, columns []stri
 	return rows, nil
 }
 
+
+// GetTableDataWithCompositeKeyPagination 使用复合主键分页获取表数据
+// 性能优化：使用 WHERE (k1,k2,k3) > (?,?,?) 替代 OFFSET，避免大偏移量时的性能下降
+// MySQL 8.0+ 支持行构造函数比较
+func (c *Connection) GetTableDataWithCompositeKeyPagination(tableName string, columns []string, primaryKeys []string, lastValues []interface{}, limit int) (*sql.Rows, error) {
+	// 使用反引号包围表名、列名和主键
+	var quotedColumns []string
+	for _, col := range columns {
+		quotedColumns = append(quotedColumns, fmt.Sprintf("`%s`", col))
+	}
+	columnsStr := strings.Join(quotedColumns, ", ")
+
+	var quotedPrimaryKeys []string
+	for _, pk := range primaryKeys {
+		quotedPrimaryKeys = append(quotedPrimaryKeys, fmt.Sprintf("`%s`", pk))
+	}
+	primaryKeyStr := strings.Join(quotedPrimaryKeys, ", ")
+
+	var query string
+	var args []interface{}
+
+	if lastValues != nil && len(lastValues) > 0 {
+		// 使用行构造函数进行复合主键比较：WHERE (k1,k2) > (?,?)
+		placeholderStr := strings.Repeat("?, ", len(primaryKeys)-1) + "?"
+		query = fmt.Sprintf("SELECT %s FROM `%s` WHERE (%s) > (%s) ORDER BY %s LIMIT %d",
+			columnsStr, tableName, primaryKeyStr, placeholderStr, primaryKeyStr, limit)
+		args = lastValues
+	} else {
+		// 第一批数据，不需要 WHERE 条件
+		query = fmt.Sprintf("SELECT %s FROM `%s` ORDER BY %s LIMIT %d",
+			columnsStr, tableName, primaryKeyStr, limit)
+	}
+
+	rows, err := c.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("获取表数据失败：%w", err)
+	}
+
+	return rows, nil
+}
 // GetTablePrimaryKeys 获取表的主键列名列表
 func (c *Connection) GetTablePrimaryKeys(tableName string) ([]string, error) {
 	// 使用SHOW KEYS FROM语句获取主键信息，避免查询information_schema导致的权限问题
