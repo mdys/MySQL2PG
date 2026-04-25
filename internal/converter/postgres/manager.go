@@ -13,6 +13,36 @@ import (
 	"github.com/yourusername/mysql2pg/internal/postgres"
 )
 
+// ConversionContext 转换上下文，包含版本信息
+type ConversionContext struct {
+	MySQLVersion     *mysql.MySQLVersionInfo
+	PostgreSQLVersion *postgres.PostgreSQLVersionInfo
+	Config           *config.Config
+}
+
+// shouldUseAdvancedRegexp 是否使用高级 REGEXP 转换
+func (c *ConversionContext) shouldUseAdvancedRegexp() bool {
+	// MySQL 9.0+ 或 MySQL 8.0.17+ 使用完整参数版本
+	return c.MySQLVersion.SupportsRegexpInstrFull()
+}
+
+// shouldUseJsonTableLateral JSON_TABLE 是否转换为 LATERAL
+func (c *ConversionContext) shouldUseJsonTableLateral() bool {
+	// MySQL 8.0+ 且 PostgreSQL 12+ 支持
+	return c.MySQLVersion.SupportsJsonTable() && c.PostgreSQLVersion.Major >= 12
+}
+
+// shouldUseJsonbPathQuery 是否使用 JSONB 路径查询
+func (c *ConversionContext) shouldUseJsonbPathQuery() bool {
+	// PostgreSQL 14+ 支持 JSONB 路径查询
+	return c.PostgreSQLVersion.SupportsJsonbPath
+}
+
+// shouldUseJsonArrayInsert 是否支持 JSON_ARRAY_INSERT 转换
+func (c *ConversionContext) shouldUseJsonArrayInsert() bool {
+	return c.MySQLVersion.SupportsJsonArrayInsert()
+}
+
 // Manager 转换管理器
 type Manager struct {
 	mysqlConn      *mysql.Connection
@@ -23,6 +53,11 @@ type Manager struct {
 	totalTasks     int
 	completedTasks int
 	mutex          sync.Mutex
+	// 版本信息
+	mysqlVersion     *mysql.MySQLVersionInfo
+	postgreSQLVersion *postgres.PostgreSQLVersionInfo
+	// 转换上下文
+	conversionCtx *ConversionContext
 	// 存储每个转换阶段的信息
 	conversionStats []ConversionStageStat
 	// 存储数据校验不一致的表信息

@@ -234,6 +234,12 @@ FROM case_08_json`
 	if !strings.Contains(ddl, "jsonb_set(") {
 		t.Errorf("JSON_INSERT/REPLACE/SET 未转换为 jsonb_set：%s", ddl)
 	}
+	if !strings.Contains(ddl, "jsonb_set((data)::jsonb, '{id}', to_jsonb(123), true)") {
+		t.Errorf("JSON_SET 未转换为合法的 jsonb_set 签名：%s", ddl)
+	}
+	if strings.Contains(ddl, "jsonb_set(data, '$.id', 123)") {
+		t.Errorf("JSON_SET 仍为不兼容语法：%s", ddl)
+	}
 	// 检查 JSON_REMOVE 转换
 	if !strings.Contains(ddl, " - 'old_key'") {
 		t.Errorf("JSON_REMOVE 未正确转换：%s", ddl)
@@ -433,9 +439,18 @@ FROM case_09_datetime`
 	if !strings.Contains(ddl, "+") {
 		t.Errorf("DATE_ADD 未转换为 + 操作符：%s", ddl)
 	}
+	if !strings.Contains(ddl, "interval '1 week'") {
+		t.Errorf("DATE_ADD 未转换为 PostgreSQL interval 语法：%s", ddl)
+	}
 	// 检查 DATE_SUB 转换
 	if !strings.Contains(ddl, "-") {
 		t.Errorf("DATE_SUB 未转换为 - 操作符：%s", ddl)
+	}
+	if !strings.Contains(ddl, "interval '1 month'") {
+		t.Errorf("DATE_SUB 未转换为 PostgreSQL interval 语法：%s", ddl)
+	}
+	if strings.Contains(ddl, "::interval '1 week'") || strings.Contains(ddl, "::interval '1 month'") {
+		t.Errorf("仍包含不兼容 interval 强制转换语法：%s", ddl)
 	}
 	// 检查 TIMEDIFF 转换
 	if !strings.Contains(ddl, " - ") {
@@ -506,7 +521,7 @@ func Test_convertMySQLOrderByToPG_Comprehensive(t *testing.T) {
 		{"leading_spaces", "  col ASC", "col ASC"},
 		{"trailing_spaces", "col ASC  ", "col ASC"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := convertMySQLOrderByToPG(tt.input)
@@ -529,7 +544,7 @@ func Test_replaceCastCharExpressions(t *testing.T) {
 		{"simple", "SELECT CAST(col AS CHAR)", "CAST(col AS TEXT)"},
 		{"with_length", "SELECT CAST(col AS CHAR(100))", "CAST(col AS TEXT)"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := replaceCastCharExpressions(tt.input)
@@ -551,7 +566,7 @@ func Test_replaceCastSignedExpressions(t *testing.T) {
 	}{
 		{"simple", "SELECT CAST(col AS SIGNED)", "CAST(col AS INTEGER)"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := replaceCastSignedExpressions(tt.input)
