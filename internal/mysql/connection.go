@@ -3,12 +3,52 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/yourusername/mysql2pg/internal/config"
 )
+
+// MySQLVersionInfo MySQL 版本信息
+type MySQLVersionInfo struct {
+	Major    int
+	Minor    int
+	Patch    int
+	Full     string
+	Is57     bool // MySQL 5.7
+	Is80     bool // MySQL 8.0
+	Is84     bool // MySQL 8.4 LTS
+	Is90     bool // MySQL 9.0+
+}
+
+// IsVersionGreaterOrEqual 检查当前版本是否大于等于指定版本
+func (m *MySQLVersionInfo) IsVersionGreaterOrEqual(major, minor int) bool {
+	if m.Major > major {
+		return true
+	}
+	if m.Major == major {
+		return m.Minor >= minor
+	}
+	return false
+}
+
+// SupportsRegexpInstrFull 是否支持完整的 REGEXP_INSTR 函数（6 参数版本）
+func (m *MySQLVersionInfo) SupportsRegexpInstrFull() bool {
+	return m.Is90 || (m.Is80 && m.Minor >= 17)
+}
+
+// SupportsJsonArrayInsert 是否支持 JSON_ARRAY_INSERT 函数
+func (m *MySQLVersionInfo) SupportsJsonArrayInsert() bool {
+	return m.Is90
+}
+
+// SupportsJsonTable 是否支持 JSON_TABLE 函数
+func (m *MySQLVersionInfo) SupportsJsonTable() bool {
+	return m.Major >= 8
+}
 
 // Connection MySQL连接管理器
 type Connection struct {
@@ -265,6 +305,59 @@ func (c *Connection) GetVersion() (string, error) {
 	return version, nil
 }
 
+
+// GetVersionInfo 获取 MySQL 详细版本信息
+func (c *Connection) GetVersionInfo() (*MySQLVersionInfo, error) {
+	version, err := c.GetVersion()
+	if err != nil {
+		return nil, err
+	}
+	return ParseMySQLVersion(version), nil
+}
+
+// ParseMySQLVersion 解析 MySQL 版本字符串
+func ParseMySQLVersion(version string) *MySQLVersionInfo {
+	info := &MySQLVersionInfo{
+		Full: version,
+	}
+
+	// 移除可能的后缀，如 "-MySQL", "-log", 等
+	cleanVersion := version
+	if idx := strings.Index(version, "-"); idx != -1 {
+		cleanVersion = version[:idx]
+	}
+
+	// 解析版本号 "major.minor.patch"
+	parts := strings.Split(cleanVersion, ".")
+	if len(parts) >= 2 {
+		major, err := strconv.Atoi(parts[0])
+		if err == nil {
+			info.Major = major
+		}
+		minor, err := strconv.Atoi(parts[1])
+		if err == nil {
+			info.Minor = minor
+		}
+		if len(parts) >= 3 {
+			patchStr := parts[2]
+			re := regexp.MustCompile(`^\d+`)
+			if match := re.FindString(patchStr); match != "" {
+				patch, err := strconv.Atoi(match)
+				if err == nil {
+					info.Patch = patch
+				}
+			}
+		}
+	}
+
+	// 设置版本标志
+	info.Is57 = info.Major == 5 && info.Minor == 7
+	info.Is80 = info.Major == 8 && info.Minor == 0
+	info.Is84 = info.Major == 8 && info.Minor == 4
+	info.Is90 = info.Major >= 9
+
+	return info
+}
 // TestConnection 测试MySQL连接
 func TestConnection(config *config.MySQLConfig) error {
 	// 测试连接时不使用压缩
