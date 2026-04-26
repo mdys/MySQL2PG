@@ -14,14 +14,14 @@ import (
 
 // MySQLVersionInfo MySQL 版本信息
 type MySQLVersionInfo struct {
-	Major    int
-	Minor    int
-	Patch    int
-	Full     string
-	Is57     bool // MySQL 5.7
-	Is80     bool // MySQL 8.0
-	Is84     bool // MySQL 8.4 LTS
-	Is90     bool // MySQL 9.0+
+	Major int
+	Minor int
+	Patch int
+	Full  string
+	Is57  bool // MySQL 5.7
+	Is80  bool // MySQL 8.0
+	Is84  bool // MySQL 8.4 LTS
+	Is90  bool // MySQL 9.0+
 }
 
 // IsVersionGreaterOrEqual 检查当前版本是否大于等于指定版本
@@ -205,7 +205,6 @@ func (c *Connection) GetTableDataWithPagination(tableName string, columns []stri
 	return rows, nil
 }
 
-
 // GetTableDataWithCompositeKeyPagination 使用复合主键分页获取表数据
 // 性能优化：使用 WHERE (k1,k2,k3) > (?,?,?) 替代 OFFSET，避免大偏移量时的性能下降
 // MySQL 8.0+ 支持行构造函数比较
@@ -245,6 +244,7 @@ func (c *Connection) GetTableDataWithCompositeKeyPagination(tableName string, co
 
 	return rows, nil
 }
+
 // GetTablePrimaryKeys 获取表的主键列名列表
 func (c *Connection) GetTablePrimaryKeys(tableName string) ([]string, error) {
 	// 使用SHOW KEYS FROM语句获取主键信息，避免查询information_schema导致的权限问题
@@ -345,7 +345,6 @@ func (c *Connection) GetVersion() (string, error) {
 	return version, nil
 }
 
-
 // GetVersionInfo 获取 MySQL 详细版本信息
 func (c *Connection) GetVersionInfo() (*MySQLVersionInfo, error) {
 	version, err := c.GetVersion()
@@ -398,6 +397,7 @@ func ParseMySQLVersion(version string) *MySQLVersionInfo {
 
 	return info
 }
+
 // TestConnection 测试MySQL连接
 func TestConnection(config *config.MySQLConfig) error {
 	// 测试连接时不使用压缩
